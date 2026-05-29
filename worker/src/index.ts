@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { runScan } from './scan/scanner';
+import { scanRouter } from './api/scan';
 
 // ─── Environment bindings ─────────────────────────────────────────────────────
 // DB        — Cloudflare D1 binding (name "DB" matches wrangler.toml [[d1_databases]])
@@ -44,6 +46,10 @@ app.get('/api/health', (c) => {
   });
 });
 
+// ── Scan router (Phase 1) ─────────────────────────────────────────────────────
+// POST /api/scan/run-now — same runScan entry point as the cron (PRD §4/§11).
+app.route('/api/scan', scanRouter);
+
 // ── TODO — Phase 1+ routes (do not implement here) ───────────────────────────
 // Mount thin Hono sub-routers once their controllers exist in api/:
 //
@@ -51,7 +57,6 @@ app.get('/api/health', (c) => {
 //   import { watchlistRouter } from './api/watchlist';
 //   import { dealsRouter }     from './api/deals';
 //   import { resolveRouter }   from './api/resolve';
-//   import { scanRouter }      from './api/scan';      // POST /api/scan/run-now
 //   import { telegramRouter }  from './api/telegram';  // POST /api/telegram/test
 //
 //   app.route('/api/config',    configRouter);    // GET / PATCH
@@ -59,7 +64,6 @@ app.get('/api/health', (c) => {
 //   app.route('/api/deals',     dealsRouter);     // GET ?status&min_discount&watchlist_id&priority
 //                                                 // PATCH :id / DELETE ?older_than_days
 //   app.route('/api/resolve',   resolveRouter);   // GET /expansions?q= / GET /blueprints?expansion_id&q=
-//   app.route('/api/scan',      scanRouter);      // POST /run-now → calls runScan(env, {trigger:'run-now'})
 //   app.route('/api/telegram',  telegramRouter);  // POST /test → calls notifier
 //
 // Rule: route handlers are thin controllers — validate input, delegate to repo.ts /
@@ -74,13 +78,9 @@ export default {
   fetch: app.fetch,
 
   // Hourly cron handler (wrangler.toml: crons = ["0 * * * *"], UTC).
-  // Phase 1: replace the console.log with `ctx.waitUntil(runScan(env, { trigger: 'cron' }))`.
-  // This must share the SAME runScan entry point as POST /api/scan/run-now — no forked logic
+  // Shares the exact same runScan entry point as POST /api/scan/run-now — no forked logic
   // (PRD §4/§11).  ctx.waitUntil keeps the isolate alive for the full async scan.
-  async scheduled(_controller: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Phase 0 stub — scan engine does not exist yet.
-    // Phase 1 implementation (scan-engine-agent):
-    //   _ctx.waitUntil(runScan(_env, { trigger: 'cron' }));
-    console.info('[card-broker] scheduled scan would run here (Phase 0 stub)');
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runScan(env, { trigger: 'cron' }));
   },
 } satisfies ExportedHandler<Env>;
