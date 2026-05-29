@@ -1,0 +1,242 @@
+/* ============================================================
+   CARD // BROKER — Base Layer
+   Global resets, full-viewport setup, backdrop, font wiring.
+   Imported by main.tsx after tokens.css.
+   No effects/keyframes beyond static appearance in Phase 0.
+   Effects (decrypt, radar, toasts, boot, card hover) are deferred
+   to src/effects/ behind feature flags — see animation skill.
+   ============================================================ */
+
+/* ---- Box model ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---- Root viewport ---- */
+html {
+  height: 100%;
+  /* Prevent the webview from bouncing/overscrolling at the OS level */
+  overscroll-behavior: none;
+}
+
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--f-body);
+  font-weight: 500;    /* Chakra Petch base body weight */
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* No body scroll — the 3-column shell manages scroll internally per region */
+  overflow: hidden;
+}
+
+/* ---- Root mount point — full viewport ---- */
+#root {
+  height: 100vh;
+  /* Ensure children can establish their own scroll contexts */
+  overflow: hidden;
+}
+
+/* ---- Text selection ---- */
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* ---- Thin custom scrollbars (WebKit — Tauri webview) ---- */
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(120, 180, 215, 0.16);
+  border-radius: 0;  /* square, matching --radius: 2px identity */
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-soft);
+}
+
+/* ---- Base typographic elements ---- */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--f-display);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+/* Approximate representative sizes (README type scale) */
+h1 { font-size: 22px; font-weight: 600; }
+h2 { font-size: 16px; font-weight: 600; }
+
+p {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* ---- Remove default button/input styling (cb- classes re-style them) ---- */
+button {
+  font-family: var(--f-ui);
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: var(--f-ui);
+  font-weight: 500;
+  background: none;
+  border: none;
+  color: inherit;
+}
+
+/* ============================================================
+   GLOBAL BACKDROP — grid + vignette
+   Sits behind all content (z-index 0, fixed, pointer-events none).
+   Grid opacity scales with --glow so it dims when glow is dialed down.
+   CRT scanlines: off by default; enabled by body.cb-scanlines
+   (feature-agent sets the class via the Tweaks toggle).
+   ============================================================ */
+.cb-app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* 44px grid using --bg-grid */
+  background:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 44px 44px;
+  /* Radial mask: grid is visible toward center, fades to transparent at edges */
+  mask-image: radial-gradient(120% 90% at 50% 38%, #000 35%, transparent 92%);
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 38%, #000 35%, transparent 92%);
+  /* Scale grid presence with glow multiplier */
+  opacity: calc(0.5 + var(--glow) * 0.5);
+}
+
+.cb-app-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 100% at 50% 30%,
+    transparent 50%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}
+
+/* ---- Optional CRT scanlines (off by default; toggled via Tweaks) ---- */
+/* feature-agent adds/removes the cb-scanlines class on body */
+body.cb-scanlines::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.16) 0px,
+    rgba(0, 0, 0, 0.16) 1px,
+    transparent 2px,
+    transparent 3px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+/* ============================================================
+   3-COLUMN SHELL SKELETON
+   Full-viewport grid: left rail | center stage | right rail.
+   Regions scroll independently; min-height: 0 prevents grid-row
+   growth to content height (README gotcha — confirmed in prototype).
+   Component-agent will build the markup; these are the layout tokens.
+   ============================================================ */
+.cb-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Hide right rail below 1180px */
+@media (max-width: 1180px) {
+  .cb-shell {
+    grid-template-columns: 224px minmax(0, 1fr);
+  }
+  .cb-shell > .cb-rail-right {
+    display: none;
+  }
+}
+
+.cb-rail-left {
+  background: var(--rail);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.cb-stage {
+  background: transparent;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Inner scroll area of the center stage */
+.cb-stage-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.cb-rail-right {
+  background: var(--rail);
+  border-left: 1px solid var(--line);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   REDUCED MOTION — global opt-out
+   Effects (animation skill) each have their own reduced-motion
+   fallback; this ensures the global default is safe.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

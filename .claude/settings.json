@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Agent",
+      "Glob",
+      "Grep",
+      "Bash(npm install*)",
+      "Bash(npm run *)",
+      "Bash(npm test*)",
+      "Bash(npm create *)",
+      "Bash(npx vitest *)",
+      "Bash(npx tsc *)",
+      "Bash(npx prettier *)",
+      "Bash(npx eslint *)",
+      "Bash(npx wrangler *)",
+      "Bash(npm run tauri *)",
+      "Bash(cargo *)",
+      "Bash(rustup *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Read(./.env*)",
+      "Read(**/.dev.vars)"
+    ]
+  }
+}

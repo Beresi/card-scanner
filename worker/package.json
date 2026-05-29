@@ -1,0 +1,24 @@
+{
+  "name": "cardtrader-deal-scanner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "hono": "latest"
+  },
+  "devDependencies": {
+    "wrangler": "latest",
+    "@cloudflare/workers-types": "latest",
+    "typescript": "latest",
+    "vitest": "latest",
+    "eslint": "latest",
+    "@typescript-eslint/parser": "latest",
+    "@typescript-eslint/eslint-plugin": "latest"
+  }
+}

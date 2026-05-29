@@ -1,0 +1,29 @@
+# ─── Dependencies ──────────────────────────────────────────────────────────
+node_modules/
+
+# ─── Build output ──────────────────────────────────────────────────────────
+dist/
+build/
+**/src-tauri/target/
+
+# ─── Cloudflare / Wrangler local state ─────────────────────────────────────
+.wrangler/
+
+# ─── Secrets — NEVER commit (real values via `wrangler secret put` / OS store)
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+*.pem
+*.key
+
+# ─── Logs ──────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ─── OS / editor cruft ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.local
+.idea/
+.vscode/*
+!.vscode/extensions.json

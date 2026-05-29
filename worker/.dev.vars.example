@@ -1,0 +1,25 @@
+# .dev.vars.example — local development secrets template
+#
+# Copy this file to .dev.vars and fill in real values for local `wrangler dev` sessions.
+# .dev.vars is git-ignored and must NEVER be committed.
+# Wrangler reads .dev.vars automatically when running `wrangler dev`.
+#
+# Production secrets are set via `wrangler secret put <NAME>` (see phase-0-runbook.md).
+
+# CardTrader API v2 bearer token.
+# Obtain from https://www.cardtrader.com/en/developer (requires a developer account).
+# HIGH SENSITIVITY — read + write/purchase scope. Rotate immediately if ever exposed.
+CARDTRADER_API_TOKEN=ct_live_REPLACE_WITH_REAL_TOKEN
+
+# Telegram Bot API token from @BotFather.
+# Create a bot at https://t.me/BotFather and copy the token it provides.
+TELEGRAM_BOT_TOKEN=0000000000:REPLACE_WITH_REAL_BOT_TOKEN
+
+# Telegram chat id that receives deal notifications.
+# See phase-0-runbook.md for the exact steps to capture this value.
+TELEGRAM_CHAT_ID=REPLACE_WITH_CHAT_ID
+
+# Shared bearer token the Tauri desktop app sends on every /api/* request.
+# Generate a strong random string (e.g. `openssl rand -hex 32`) and store it
+# in the desktop app's OS-backed secure storage. Set the same value here for dev.
+DESKTOP_AUTH_TOKEN=REPLACE_WITH_STRONG_RANDOM_TOKEN

@@ -1,0 +1,127 @@
+/* ============================================================
+   UI COMPONENT STYLES
+   ============================================================ */
+
+/* ---- Panel ---- */
+.cb-panel {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line);
+  position: relative;
+}
+.cb-panel.chamfer, .cb-panel.chamfer-sm { border: 0; outline: 1px solid var(--line); outline-offset: -1px; }
+.cb-panel-glow {
+  outline: 1px solid var(--line-accent);
+  box-shadow: 0 0 calc(28px * var(--glow)) color-mix(in oklab, var(--accent) 12%, transparent);
+}
+.cb-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px var(--pad) 0;
+}
+.cb-panel-right { display: flex; align-items: center; gap: 10px; }
+.cb-panel-body { padding: var(--pad); }
+
+/* ---- Button ---- */
+.cb-btn {
+  font-family: var(--f-display);
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-3);
+  color: var(--text);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all .14s ease;
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
+  white-space: nowrap;
+}
+.cb-btn-md { padding: 8px 14px; font-size: 13px; }
+.cb-btn-sm { padding: 5px 10px; font-size: 11.5px; }
+.cb-btn-lg { padding: 11px 20px; font-size: 14px; }
+.cb-btn-ico { display: inline-flex; margin: 0 -2px; }
+.cb-btn:hover { border-color: var(--line-accent); color: #fff; background: var(--panel-3); }
+.cb-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.cb-btn-primary {
+  background: var(--accent); color: var(--accent-ink); border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 0 calc(18px * var(--glow)) var(--accent-glow);
+}
+.cb-btn-primary:hover { background: color-mix(in oklab, var(--accent) 88%, #fff); color: var(--accent-ink); }
+.cb-btn-hot { background: var(--hot); color: #fff; border-color: transparent; font-weight: 600; }
+.cb-btn-hot:hover { background: color-mix(in oklab, var(--hot) 88%, #fff); }
+.cb-btn-danger { color: var(--hot); border-color: color-mix(in oklab, var(--hot) 40%, transparent); }
+.cb-btn-danger:hover { background: color-mix(in oklab, var(--hot) 14%, transparent); color: #fff; }
+.cb-btn-quiet { background: transparent; border-color: var(--line); color: var(--text-dim); }
+.cb-btn-quiet:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* ---- Status ---- */
+.cb-status { display: inline-flex; align-items: center; gap: 7px; }
+.cb-status-lbl { font-size: 11px; color: var(--text-dim); letter-spacing: .05em; }
+
+/* ---- Tag ---- */
+.cb-tag {
+  font-family: var(--f-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 2px 7px; border: 1px solid var(--line); color: var(--text-dim);
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.cb-tag-accent { color: var(--accent); border-color: var(--line-accent); background: var(--accent-soft); }
+.cb-tag-good   { color: var(--good); border-color: color-mix(in oklab, var(--good) 35%, transparent); }
+.cb-tag-hot    { color: var(--hot); border-color: color-mix(in oklab, var(--hot) 40%, transparent); background: color-mix(in oklab, var(--hot) 10%, transparent); }
+.cb-tag-warn   { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 35%, transparent); }
+
+/* ---- Segmented ---- */
+.cb-seg { display: inline-flex; border: 1px solid var(--line); background: var(--bg); }
+.cb-seg-opt {
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  background: transparent; border: 0; color: var(--text-dim); cursor: pointer;
+  padding: 7px 13px; transition: all .12s ease; border-right: 1px solid var(--line);
+}
+.cb-seg-opt:last-child { border-right: 0; }
+.cb-seg-sm .cb-seg-opt { padding: 5px 9px; font-size: 10px; }
+.cb-seg-opt:hover { color: var(--text); }
+.cb-seg-opt.is-on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* ---- Switch ---- */
+.cb-switch {
+  width: 38px; height: 20px; border: 1px solid var(--line-strong); background: var(--bg);
+  position: relative; cursor: pointer; padding: 0; transition: all .16s ease;
+}
+.cb-switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  background: var(--text-faint); transition: all .16s ease;
+}
+.cb-switch.is-on { border-color: var(--line-accent); background: var(--accent-soft); }
+.cb-switch.is-on .cb-switch-knob { left: 20px; background: var(--accent); box-shadow: 0 0 calc(8px*var(--glow)) var(--accent-glow); }
+
+/* ---- InheritField ---- */
+.cb-ifield { display: flex; flex-direction: column; gap: 6px; }
+.cb-ifield-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cb-ifield-lbl { font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.cb-inherit {
+  font-family: var(--f-mono); font-size: 10px; color: var(--text-faint); letter-spacing: .04em;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.cb-reset {
+  font-family: var(--f-mono); font-size: 10px; color: var(--accent); letter-spacing: .04em;
+  background: var(--accent-soft); border: 1px solid var(--line-accent); cursor: pointer; padding: 1px 6px;
+}
+.cb-reset:hover { background: color-mix(in oklab, var(--accent) 24%, transparent); }
+.cb-ifield-ctl.is-inherited { opacity: .62; }
+
+/* ---- Price bar ---- */
+.cb-pbar { position: relative; height: 5px; background: rgba(120,180,215,.10); width: 100%; }
+.cb-pbar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--good); box-shadow: 0 0 calc(8px*var(--glow)) color-mix(in oklab, var(--good) 60%, transparent); }
+.cb-pbar-base { position: absolute; right: 0; top: -2px; bottom: -2px; width: 1px; background: var(--text-dim); }
+
+/* ---- icon default ---- */
+.cb-ico { display: block; }
+
+/* ---- text inputs ---- */
+.cb-input, .cb-select {
+  font-family: var(--f-mono); font-size: 13px;
+  background: var(--bg); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 8px 11px; width: 100%;
+}
+.cb-input:focus, .cb-select:focus { border-color: var(--accent); outline: none; }
+.cb-input::placeholder { color: var(--text-faint); }
+.cb-select { cursor: pointer; }
+.cb-num { width: 92px; }

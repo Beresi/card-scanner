@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability set for the Card // Broker main window. Minimal allowlist — only what the webview actually uses.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}
