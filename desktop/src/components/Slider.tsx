@@ -5,13 +5,18 @@
  *   feed-range           (the <input type="range">)
  *   cb-mono              (the value readout span)
  *
- * The wrapper is a plain flex container (no named class — its layout
- * is always inline within the callers' context).
+ * Drag-then-commit: the thumb tracks a LOCAL value while dragging (so it moves
+ * smoothly and the readout updates live), and `onChange` is only called when the
+ * interaction settles — pointer up, key up, or blur. This prevents the common
+ * "slider fights the server" jank where each drag tick fires an async mutation
+ * and the refetched value snaps the thumb back. While not dragging, the local
+ * value follows the controlled `value` prop.
  *
- * Accessibility: the range input has an accessible name via the
- * `label` prop (mapped to aria-label). If the caller passes neither
- * `label` nor `aria-label` via rest, the suffix is used as a fallback.
+ * Accessibility: the range input has an accessible name via the `label` prop
+ * (mapped to aria-label), falling back to `suffix`. Keyboard arrows update the
+ * value live and commit on key up.
  */
+import { useEffect, useRef, useState } from 'react';
 import type { InputHTMLAttributes } from 'react';
 
 export interface SliderProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'onChange' | 'value' | 'min' | 'max' | 'step'> {
@@ -38,23 +43,38 @@ export function Slider({
   className,
   ...rest
 }: SliderProps) {
-  const wrapClass = className ?? undefined;
+  const [local, setLocal] = useState(value);
+  const dragging = useRef(false);
+
+  // Follow the controlled value when the user isn't actively dragging.
+  useEffect(() => {
+    if (!dragging.current) setLocal(value);
+  }, [value]);
+
+  const commit = () => {
+    dragging.current = false;
+    if (local !== value) onChange(local);
+  };
 
   return (
-    <span className={wrapClass} style={{ display: 'inline-flex', alignItems: 'center', gap: '9px' }}>
+    <span className={className} style={{ display: 'inline-flex', alignItems: 'center', gap: '9px' }}>
       <input
         type="range"
         className="feed-range"
         min={min}
         max={max}
         step={step}
-        value={value}
+        value={local}
         aria-label={label ?? suffix ?? undefined}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onPointerDown={() => { dragging.current = true; }}
+        onChange={(e) => setLocal(Number(e.target.value))}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
         {...rest}
       />
       <span className="cb-mono">
-        {value}{suffix}
+        {local}{suffix}
       </span>
     </span>
   );
