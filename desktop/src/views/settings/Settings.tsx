@@ -212,7 +212,8 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   //   body[data-theme]     = resolved mode  ('dark' | 'light') — NEVER 'system'
   //   body[data-font]      = FontChoice     ('chakra' | 'orbitron' | 'rajdhani' | 'system')
   //   body[data-density]   = Density        ('comfortable' | 'compact')
-  //   :root { --accent }   = accent_color   (CSS hex color string)
+  //   body style --accent  = accent_color   (inline on <body> so it overrides
+  //                          the palette's body-level --accent for descendants)
   //
   // 'system' mode is resolved here via matchMedia; OS changes re-apply live
   // via a change listener that is cleaned up on unmount.
@@ -229,7 +230,11 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
       document.body.dataset.theme   = mode;
       document.body.dataset.font    = config.font;
       document.body.dataset.density = config.density;
-      document.documentElement.style.setProperty('--accent', config.accent_color);
+      // Set --accent inline on <body> (NOT documentElement): the palette
+      // selectors set --accent on body, so a body-inline value is what wins
+      // for all descendants. Setting it on <html> would be shadowed by the
+      // palette's body-level declaration.
+      document.body.style.setProperty('--accent', config.accent_color);
     }
 
     applyTheme();

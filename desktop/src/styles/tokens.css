@@ -14,7 +14,8 @@
                (Settings resolves system→dark/light in JS; only "dark"/"light" arrives here)
      Font:     body[data-font]     ∈ { "chakra" (default), "orbitron", "rajdhani", "system" }
      Density:  body[data-density]  ∈ { "compact" }
-     Accent:   --accent set as inline style on :root by Settings; inline wins over body[] selectors.
+     Accent:   --accent set as inline style on <body> by Settings; body-inline wins over the
+               palette's body[] --accent declaration for all descendants (independent of palette).
 
    SELECTOR STRATEGY:
    - :root = cyan-dark (today's exact values; the default, no attributes required)
