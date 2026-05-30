@@ -72,8 +72,9 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # <-- paste here
 
 ## Step 3 — Apply the database schema
 
-**Wait for backend-agent to deliver `src/db/schema.sql` before running this step.**
-Once the schema file exists, apply it to both the local dev DB and the remote DB.
+The schema is delivered at `src/db/schema.sql` (creates all six tables and seeds
+the single `config` row via `INSERT OR IGNORE INTO config (id) VALUES (1)` — the
+inheritance baseline). Apply it to both the local dev DB and the remote DB.
 
 Apply to the **remote** (production) database:
 
@@ -223,6 +224,55 @@ curl https://cardtrader-deal-scanner.<your-subdomain>.workers.dev/api/health
 
 Confirm in the Wrangler deploy output or Cloudflare dashboard that the cron
 trigger `0 * * * *` (hourly UTC) is registered.
+
+---
+
+## Step 9 — Verify end-to-end (with the bearer token)
+
+Every `/api/*` route requires `Authorization: Bearer <DESKTOP_AUTH_TOKEN>` — there
+is **no Cloudflare Access**; the bearer gate in `src/index.ts` is the sole auth
+layer (single-user tool; see `docs/.bootstrap-discovery.md`). Replace `<URL>` with
+your deployed Worker URL and `<TOKEN>` with the DESKTOP_AUTH_TOKEN.
+
+Health (latest scan + token status):
+
+```sh
+curl -H "Authorization: Bearer <TOKEN>" https://<URL>/api/health
+```
+
+Trigger a scan immediately (same code path as the hourly cron):
+
+```sh
+curl -X POST -H "Authorization: Bearer <TOKEN>" https://<URL>/api/scan/run-now
+```
+
+The response is a scan summary `{ runId, watchItemsScanned, …, error }`. With an
+empty watchlist it scans 0 items and closes cleanly. Without `CARDTRADER_API_TOKEN`
+the run records `error: "cardtrader token invalid (401)"` and aborts cleanly — that
+is expected until the token is set. A request with no/invalid bearer returns `401`.
+
+(Optional) Test Telegram wiring once both Telegram secrets are set:
+
+```sh
+curl -X POST -H "Authorization: Bearer <TOKEN>" https://<URL>/api/telegram/test
+```
+
+---
+
+## Step 10 — Point the desktop app at the cloud
+
+For the later wiring pass, create `desktop/.env.local` (git-ignored via `*.local`):
+
+```
+VITE_API_BASE_URL=https://<URL>
+VITE_DEV_AUTH_TOKEN=<the same DESKTOP_AUTH_TOKEN>
+```
+
+`desktop/src/api/client.ts` reads these. This is the dev path; production moves the
+token into Tauri OS-backed secure storage (security-agent task). The watchlist
+starts empty — add real items via the desktop add-flow (needs `/api/resolve`
+fetch+cache, a later task) or by inserting rows with **real** CardTrader
+expansion/blueprint ids; mock ids will not resolve against the live API.
 
 ---
 
