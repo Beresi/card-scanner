@@ -9,7 +9,7 @@
    token layer makes the visual swap instant because all downstream CSS
    uses var(--…) exclusively.
 
-     Palette:  body[data-palette]  ∈ { "cyan" (default), "amber", "matrix", "synthwave" }
+     Palette:  body[data-palette]  ∈ { "cyan" (default), "obsidian", "matrix", "synthwave" }
      Theme:    body[data-theme]    ∈ { "dark" (default), "light" }
                (Settings resolves system→dark/light in JS; only "dark"/"light" arrives here)
      Font:     body[data-font]     ∈ { "chakra" (default), "orbitron", "rajdhani", "system" }
@@ -200,64 +200,64 @@ body[data-theme="light"][data-palette="cyan"] {
 }
 
 /* ============================================================
-   PALETTE × MODE: AMBER DARK
-   Warm brown-black surfaces; amber accent.
+   PALETTE × MODE: OBSIDIAN DARK
+   Neutral graphite-black surfaces; accent is independent.
    ============================================================ */
-body[data-palette="amber"][data-theme="dark"] {
-  /* surfaces — near-black with a warm/brown-amber cast */
-  --bg:      #0c0901;  /* warm near-black */
-  --rail:    #100d03;  /* warm-dark recessed rail */
-  --panel:   #170f04;  /* base panel */
-  --panel-2: #1d1406;  /* raised panel */
-  --panel-3: #231a09;  /* inputs / buttons */
-  /* borders — warm amber-tinted hairlines */
-  --line:        rgba(210, 160, 60, 0.10);
-  --line-strong: rgba(220, 175, 70, 0.22);
-  /* text — warm off-white */
-  --text:       #faf3e4;
-  --text-dim:   #c4a97a;
-  --text-faint: #7a6040;
-  /* accent */
-  --accent:     #f5a623;
-  --accent-ink: #2a1500;
-  /* semantic — keep hue-neutral for legibility */
+body[data-palette="obsidian"][data-theme="dark"] {
+  /* surfaces — near-pure black with a faint cool-neutral sheen */
+  --bg:      #07070a;  /* obsidian black */
+  --rail:    #0a0a0f;  /* recessed graphite rail */
+  --panel:   #0e0e14;  /* base panel */
+  --panel-2: #14141c;  /* raised panel */
+  --panel-3: #1c1c25;  /* inputs / buttons */
+  /* borders — neutral cool-grey hairlines */
+  --line:        rgba(180, 186, 210, 0.10);
+  --line-strong: rgba(190, 196, 220, 0.20);
+  /* text — neutral near-white */
+  --text:       #eceef4;
+  --text-dim:   #a9aebf;
+  --text-faint: #6a6f80;
+  /* accent — independent (user-chosen); this is only the fallback default */
+  --accent:     #22d3ee;
+  --accent-ink: #051016;
+  /* semantic */
   --hot:  #f0387a;
   --good: #45e0a0;
-  --warn: #f5e23a;
+  --warn: #f5b945;
   /* glow + grid */
   --glow:    1;
-  --bg-grid: rgba(180, 120, 40, 0.045);
+  --bg-grid: rgba(150, 160, 190, 0.04);
   color-scheme: dark;
 }
 
 /* ============================================================
-   PALETTE × MODE: AMBER LIGHT
-   Warm ivory surfaces; amber accent.
+   PALETTE × MODE: OBSIDIAN LIGHT
+   Cool graphite-white surfaces; accent is independent.
    ============================================================ */
-body[data-palette="amber"][data-theme="light"] {
-  /* surfaces — warm ivory layers */
-  --bg:      #fdf6e8;  /* warm ivory */
-  --rail:    #f0e3c8;  /* warm rail */
-  --panel:   #f7eedd;  /* base panel */
-  --panel-2: #ecdec8;  /* raised panel */
-  --panel-3: #dfd0b6;  /* inputs / buttons */
-  /* borders — warm dark-on-light hairlines */
-  --line:        rgba(100, 60, 10, 0.10);
-  --line-strong: rgba(110, 70, 10, 0.18);
-  /* text — warm dark */
-  --text:       #1a0f00;
-  --text-dim:   #5a3a10;
-  --text-faint: #8a6030;
-  /* accent */
-  --accent:     #c07000;  /* darker amber for contrast on light */
-  --accent-ink: #fff5e0;
+body[data-palette="obsidian"][data-theme="light"] {
+  /* surfaces — cool silver-grey layers */
+  --bg:      #f3f4f7;  /* cool off-white */
+  --rail:    #e3e5ec;  /* silver rail */
+  --panel:   #eceef3;  /* base panel */
+  --panel-2: #e0e2ea;  /* raised panel */
+  --panel-3: #d2d5df;  /* inputs / buttons */
+  /* borders — neutral dark-on-light hairlines */
+  --line:        rgba(20, 24, 40, 0.10);
+  --line-strong: rgba(20, 24, 40, 0.18);
+  /* text — dark neutral slate */
+  --text:       #0e1118;
+  --text-dim:   #3c4250;
+  --text-faint: #6a7080;
+  /* accent — independent (user-chosen); fallback default darkened for light */
+  --accent:     #2f6e8f;
+  --accent-ink: #ffffff;
   /* semantic */
   --hot:  #c41840;
   --good: #1a9060;
   --warn: #a86800;
   /* glow */
   --glow:    0.45;
-  --bg-grid: rgba(120, 80, 20, 0.045);
+  --bg-grid: rgba(40, 50, 80, 0.04);
   color-scheme: light;
 }
 

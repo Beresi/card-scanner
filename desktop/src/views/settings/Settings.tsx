@@ -46,21 +46,9 @@ const ACCENT_PRESETS: string[] = [
   '#a3e635', // lime
 ];
 
-/**
- * Signature accent color per palette — applied automatically when the user
- * picks a palette so the accent jumps to a sensible default for that theme.
- * The user is free to re-pick accent independently after.
- */
-const PALETTE_ACCENT: Record<ThemePalette, string> = {
-  cyan:      '#22d3ee',
-  amber:     '#f5a623',
-  matrix:    '#34d399',
-  synthwave: '#c084fc',
-};
-
 const PALETTE_OPTIONS: { value: ThemePalette; label: string }[] = [
   { value: 'cyan',      label: 'Cyan' },
-  { value: 'amber',     label: 'Amber' },
+  { value: 'obsidian',  label: 'Obsidian' },
   { value: 'matrix',    label: 'Matrix' },
   { value: 'synthwave', label: 'Synthwave' },
 ];
@@ -220,7 +208,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   // Runs on mount and whenever any appearance field changes.
   //
   // DOM contract (tokens.css and its parallel agent consume these exactly):
-  //   body[data-palette]   = ThemePalette   ('cyan' | 'amber' | 'matrix' | 'synthwave')
+  //   body[data-palette]   = ThemePalette   ('cyan' | 'obsidian' | 'matrix' | 'synthwave')
   //   body[data-theme]     = resolved mode  ('dark' | 'light') — NEVER 'system'
   //   body[data-font]      = FontChoice     ('chakra' | 'orbitron' | 'rajdhani' | 'system')
   //   body[data-density]   = Density        ('comfortable' | 'compact')
@@ -277,11 +265,11 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
           <Segmented
             value={config.theme_palette}
             options={PALETTE_OPTIONS as { value: string; label: string }[]}
-            onChange={(v) => {
-              const p = v as ThemePalette;
-              // Jump accent to the palette's signature; user can re-pick after.
-              patchConfig({ theme_palette: p, accent_color: PALETTE_ACCENT[p] });
-            }}
+            onChange={(v) =>
+              // Palette controls surfaces/backgrounds only — accent stays an
+              // independent user choice (decoupled).
+              patchConfig({ theme_palette: v as ThemePalette })
+            }
             size="sm"
           />
         </Row>

@@ -10,7 +10,7 @@ export type Density = 'comfortable' | 'compact';
 export type Importance = 'low' | 'normal' | 'high';
 export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'D';
 export type FoilPref = 'any' | 'foil' | 'nonfoil';
-export type ThemePalette = 'cyan' | 'amber' | 'matrix' | 'synthwave';
+export type ThemePalette = 'cyan' | 'obsidian' | 'matrix' | 'synthwave';
 export type FontChoice = 'chakra' | 'orbitron' | 'rajdhani' | 'system';
 
 // ---------------------------------------------------------------------------
