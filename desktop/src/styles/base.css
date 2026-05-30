@@ -67,6 +67,14 @@ body {
   background: var(--accent-soft);
 }
 
+/* Light-mode scrollbars — dark thumb on light track for visibility */
+body[data-theme="light"] *::-webkit-scrollbar-thumb {
+  background: rgba(20, 60, 100, 0.20);
+}
+body[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 60, 100, 0.36);
+}
+
 /* ---- Base typographic elements ---- */
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--f-display);

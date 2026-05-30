@@ -24,20 +24,52 @@ import { Slider } from '../../components/Slider';
 import { Status } from '../../components/Status';
 import { Switch } from '../../components/Switch';
 import { useMockConfigStore } from '../../mock/hooks';
-import type { Condition, Density, FoilPref, Importance, Theme } from '../../api/types';
+import type { Condition, Density, FontChoice, FoilPref, Importance, Theme, ThemePalette } from '../../api/types';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Curated accent presets — matches tokens.css comment exactly. */
+/** Curated accent presets — 12 colors spanning the palette spectrum. */
 const ACCENT_PRESETS: string[] = [
   '#22d3ee', // cyan (default)
-  '#37e0c8', // teal
-  '#5b8cff', // blue
-  '#f0387a', // hot pink
-  '#f5b945', // amber
-  '#45e0a0', // green
+  '#5b8def', // blue
+  '#818cf8', // indigo
+  '#c084fc', // purple
+  '#e879f9', // fuchsia
+  '#f472b6', // pink
+  '#f87171', // red
+  '#f5a623', // amber
+  '#fbbf24', // yellow
+  '#34d399', // emerald
+  '#2dd4bf', // teal
+  '#a3e635', // lime
+];
+
+/**
+ * Signature accent color per palette — applied automatically when the user
+ * picks a palette so the accent jumps to a sensible default for that theme.
+ * The user is free to re-pick accent independently after.
+ */
+const PALETTE_ACCENT: Record<ThemePalette, string> = {
+  cyan:      '#22d3ee',
+  amber:     '#f5a623',
+  matrix:    '#34d399',
+  synthwave: '#c084fc',
+};
+
+const PALETTE_OPTIONS: { value: ThemePalette; label: string }[] = [
+  { value: 'cyan',      label: 'Cyan' },
+  { value: 'amber',     label: 'Amber' },
+  { value: 'matrix',    label: 'Matrix' },
+  { value: 'synthwave', label: 'Synthwave' },
+];
+
+const FONT_OPTIONS: { value: FontChoice; label: string; hint: string }[] = [
+  { value: 'chakra',   label: 'Chakra Petch', hint: 'Chakra Petch · IBM Plex Mono' },
+  { value: 'orbitron', label: 'Orbitron',     hint: 'Orbitron · Space Mono' },
+  { value: 'rajdhani', label: 'Rajdhani',     hint: 'Rajdhani · JetBrains Mono' },
+  { value: 'system',   label: 'System',       hint: 'System UI · monospace' },
 ];
 
 const CONDITION_OPTIONS: { value: string; label: string }[] = [
@@ -184,19 +216,44 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   const [tested, setTested] = useState(false);
 
   // -------------------------------------------------------------------------
-  // Live apply: theme / accent / density → DOM attributes/vars.
-  // Runs on mount and whenever the three values change.
+  // Live apply: all appearance attrs/vars → DOM.
+  // Runs on mount and whenever any appearance field changes.
   //
-  // tokens.css reads:
-  //   body[data-theme="light"]     → light surface overrides
-  //   body[data-density="compact"] → --pad / --row overrides
-  //   :root { --accent: … }        → recolors every accent-derived var
+  // DOM contract (tokens.css and its parallel agent consume these exactly):
+  //   body[data-palette]   = ThemePalette   ('cyan' | 'amber' | 'matrix' | 'synthwave')
+  //   body[data-theme]     = resolved mode  ('dark' | 'light') — NEVER 'system'
+  //   body[data-font]      = FontChoice     ('chakra' | 'orbitron' | 'rajdhani' | 'system')
+  //   body[data-density]   = Density        ('comfortable' | 'compact')
+  //   :root { --accent }   = accent_color   (CSS hex color string)
+  //
+  // 'system' mode is resolved here via matchMedia; OS changes re-apply live
+  // via a change listener that is cleaned up on unmount.
   // -------------------------------------------------------------------------
   useEffect(() => {
-    document.body.dataset.theme = config.theme;
-    document.body.dataset.density = config.density;
-    document.documentElement.style.setProperty('--accent', config.accent_color);
-  }, [config.theme, config.density, config.accent_color]);
+    function applyTheme() {
+      const mode: 'dark' | 'light' =
+        config.theme === 'system'
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light'
+          : config.theme;
+      document.body.dataset.palette = config.theme_palette;
+      document.body.dataset.theme   = mode;
+      document.body.dataset.font    = config.font;
+      document.body.dataset.density = config.density;
+      document.documentElement.style.setProperty('--accent', config.accent_color);
+    }
+
+    applyTheme();
+
+    // Re-apply when the OS dark/light preference changes (only relevant when
+    // config.theme === 'system'; safe to subscribe always — no-op otherwise).
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    mq.addEventListener('change', applyTheme);
+    return () => {
+      mq.removeEventListener('change', applyTheme);
+    };
+  }, [config.theme_palette, config.theme, config.font, config.density, config.accent_color]);
 
   // -------------------------------------------------------------------------
   // Telegram test mock — shows "Sent ✓" for 2.4s then reverts.
@@ -216,7 +273,20 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
       {/* 1. APPEARANCE                                                    */}
       {/* ================================================================ */}
       <Panel title="Appearance" className="set-panel">
-        <Row label="Theme" hint="dark-first build">
+        <Row label="Palette" hint="applies live">
+          <Segmented
+            value={config.theme_palette}
+            options={PALETTE_OPTIONS as { value: string; label: string }[]}
+            onChange={(v) => {
+              const p = v as ThemePalette;
+              // Jump accent to the palette's signature; user can re-pick after.
+              patchConfig({ theme_palette: p, accent_color: PALETTE_ACCENT[p] });
+            }}
+            size="sm"
+          />
+        </Row>
+
+        <Row label="Mode" hint="dark-first build">
           <Segmented
             value={config.theme}
             options={THEME_OPTIONS as { value: string; label: string }[]}
@@ -242,6 +312,15 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
               />
             ))}
           </div>
+        </Row>
+
+        <Row label="Font" hint="applies live">
+          <Select
+            value={config.font}
+            options={FONT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            onChange={(v) => patchConfig({ font: v as FontChoice })}
+            size="sm"
+          />
         </Row>
 
         <Row label="List density" hint="applies live">

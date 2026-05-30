@@ -29,6 +29,8 @@ export const MOCK_CONFIG: Config = {
 
   // Display / UI
   theme: 'dark',
+  theme_palette: 'cyan',
+  font: 'chakra',
   accent_color: '#22d3ee',
   density: 'comfortable',
 

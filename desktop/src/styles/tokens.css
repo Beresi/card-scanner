@@ -9,9 +9,21 @@
    token layer makes the visual swap instant because all downstream CSS
    uses var(--…) exclusively.
 
-     Theme:   body[data-theme="light"]  overrides surface/text vars
-     Density: body[data-density="compact"] overrides --pad / --row
-     Accent:  write --accent (+ --accent-ink) directly onto :root
+     Palette:  body[data-palette]  ∈ { "cyan" (default), "amber", "matrix", "synthwave" }
+     Theme:    body[data-theme]    ∈ { "dark" (default), "light" }
+               (Settings resolves system→dark/light in JS; only "dark"/"light" arrives here)
+     Font:     body[data-font]     ∈ { "chakra" (default), "orbitron", "rajdhani", "system" }
+     Density:  body[data-density]  ∈ { "compact" }
+     Accent:   --accent set as inline style on :root by Settings; inline wins over body[] selectors.
+
+   SELECTOR STRATEGY:
+   - :root = cyan-dark (today's exact values; the default, no attributes required)
+   - 8 explicit body[data-palette="X"][data-theme="Y"] blocks fully define each combination
+   - body[data-font="X"] blocks swap the --f-* family tokens
+   - body[data-density="compact"] overrides --pad / --row
+
+   Default state (no attributes OR data-palette="cyan" + data-theme="dark" + data-font="chakra"):
+   IDENTICAL to the previous single :root block — byte-for-byte same visuals.
    ============================================================ */
 
 /* ============================================================
@@ -22,11 +34,16 @@
    '@fontsource/ibm-plex-mono/{400,500,600}.css'. The --f-* token
    stacks below reference the resulting 'Chakra Petch' / 'IBM Plex
    Mono' families, falling back to system-ui / ui-monospace.
+
+   Additional fonts (Orbitron, JetBrains Mono, Rajdhani, Space Mono)
+   are imported by the parallel agent via @fontsource in main.tsx.
+   This file only references the family names.
    ============================================================ */
 
 /* ============================================================
-   ROOT TOKEN BLOCK — DARK THEME (default)
+   ROOT TOKEN BLOCK — CYAN DARK (default)
    All values match the README/handoff tables exactly.
+   This is the base; all other palette×mode blocks override it.
    ============================================================ */
 :root {
   /* ----------------------------------------------------------
@@ -54,10 +71,11 @@
   --text-faint: #6c7e92;  /* tertiary / metadata */
 
   /* ----------------------------------------------------------
-     ACCENT — user-selectable from the curated swatch set.
+     ACCENT — palette signature (user can further override via inline style).
      Curated set: #22d3ee  #37e0c8  #5b8cff  #f0387a  #f5b945  #45e0a0
      Swap --accent (and --accent-ink) on :root at runtime to recolor
      every accent-derived value immediately.
+     Inline style on :root wins over all body[] selector overrides.
   ---------------------------------------------------------- */
   --accent:     #22d3ee;  /* default: cyan */
   --accent-ink: #042027;  /* text on accent fills (dark complement of cyan) */
@@ -88,7 +106,7 @@
   --bg-grid: rgba(80, 150, 190, 0.045);  /* 44px grid lines */
 
   /* ----------------------------------------------------------
-     TYPE SCALE FAMILIES
+     TYPE SCALE FAMILIES (default: Chakra Petch + IBM Plex Mono)
   ---------------------------------------------------------- */
   --f-display: 'Chakra Petch', system-ui, sans-serif;  /* display / headings */
   --f-ui:      'Chakra Petch', system-ui, sans-serif;  /* UI labels / body */
@@ -118,6 +136,256 @@
 }
 
 /* ============================================================
+   PALETTE × MODE: CYAN DARK
+   Explicit selector — identical to :root, ensures no cascade gap
+   when both data-palette="cyan" and data-theme="dark" are set.
+   ============================================================ */
+body[data-palette="cyan"][data-theme="dark"] {
+  /* surfaces */
+  --bg:      #05070b;
+  --rail:    #070a10;
+  --panel:   #0a0f17;
+  --panel-2: #0e141f;
+  --panel-3: #121a28;
+  /* borders */
+  --line:        rgba(120, 180, 215, 0.10);
+  --line-strong: rgba(120, 200, 230, 0.22);
+  /* text */
+  --text:       #eaf2fb;
+  --text-dim:   #a3b5c8;
+  --text-faint: #6c7e92;
+  /* accent + semantic */
+  --accent:     #22d3ee;
+  --accent-ink: #042027;
+  --hot:  #f0387a;
+  --good: #45e0a0;
+  --warn: #f5b945;
+  /* glow + grid */
+  --glow:    1;
+  --bg-grid: rgba(80, 150, 190, 0.045);
+  color-scheme: dark;
+}
+
+/* ============================================================
+   PALETTE × MODE: CYAN LIGHT
+   Cool off-white with cyan accent.
+   ============================================================ */
+body[data-palette="cyan"][data-theme="light"],
+body[data-theme="light"]:not([data-palette]),
+body[data-theme="light"][data-palette="cyan"] {
+  /* surfaces — layered cool off-white; each step distinctly lighter */
+  --bg:      #f0f5f9;  /* cool near-white, slightly blue-grey */
+  --rail:    #e3ecf3;  /* recessed rails, noticeably darker than bg */
+  --panel:   #eaf1f8;  /* base panel — between rail and bg-2 */
+  --panel-2: #dce8f2;  /* raised panel (gradient top) */
+  --panel-3: #cddce9;  /* inputs / buttons surface */
+  /* borders — dark-on-light hairlines */
+  --line:        rgba(20, 60, 100, 0.10);
+  --line-strong: rgba(20, 70, 120, 0.18);
+  /* text — dark slate on light */
+  --text:       #0d1a26;  /* near-black slate */
+  --text-dim:   #2e4a62;  /* mid-tone slate */
+  --text-faint: #5a7488;  /* faint but still ≥4.5:1 on --bg */
+  /* accent — same hue, stays readable on light surfaces */
+  --accent:     #22d3ee;
+  --accent-ink: #042027;
+  /* semantic — slightly intensified for visibility on light */
+  --hot:  #d6205a;
+  --good: #1db87a;
+  --warn: #c88b00;
+  /* glow — toned down; additive glows wash out on light backgrounds */
+  --glow:    0.45;
+  --bg-grid: rgba(20, 80, 130, 0.045);
+  color-scheme: light;
+}
+
+/* ============================================================
+   PALETTE × MODE: AMBER DARK
+   Warm brown-black surfaces; amber accent.
+   ============================================================ */
+body[data-palette="amber"][data-theme="dark"] {
+  /* surfaces — near-black with a warm/brown-amber cast */
+  --bg:      #0c0901;  /* warm near-black */
+  --rail:    #100d03;  /* warm-dark recessed rail */
+  --panel:   #170f04;  /* base panel */
+  --panel-2: #1d1406;  /* raised panel */
+  --panel-3: #231a09;  /* inputs / buttons */
+  /* borders — warm amber-tinted hairlines */
+  --line:        rgba(210, 160, 60, 0.10);
+  --line-strong: rgba(220, 175, 70, 0.22);
+  /* text — warm off-white */
+  --text:       #faf3e4;
+  --text-dim:   #c4a97a;
+  --text-faint: #7a6040;
+  /* accent */
+  --accent:     #f5a623;
+  --accent-ink: #2a1500;
+  /* semantic — keep hue-neutral for legibility */
+  --hot:  #f0387a;
+  --good: #45e0a0;
+  --warn: #f5e23a;
+  /* glow + grid */
+  --glow:    1;
+  --bg-grid: rgba(180, 120, 40, 0.045);
+  color-scheme: dark;
+}
+
+/* ============================================================
+   PALETTE × MODE: AMBER LIGHT
+   Warm ivory surfaces; amber accent.
+   ============================================================ */
+body[data-palette="amber"][data-theme="light"] {
+  /* surfaces — warm ivory layers */
+  --bg:      #fdf6e8;  /* warm ivory */
+  --rail:    #f0e3c8;  /* warm rail */
+  --panel:   #f7eedd;  /* base panel */
+  --panel-2: #ecdec8;  /* raised panel */
+  --panel-3: #dfd0b6;  /* inputs / buttons */
+  /* borders — warm dark-on-light hairlines */
+  --line:        rgba(100, 60, 10, 0.10);
+  --line-strong: rgba(110, 70, 10, 0.18);
+  /* text — warm dark */
+  --text:       #1a0f00;
+  --text-dim:   #5a3a10;
+  --text-faint: #8a6030;
+  /* accent */
+  --accent:     #c07000;  /* darker amber for contrast on light */
+  --accent-ink: #fff5e0;
+  /* semantic */
+  --hot:  #c41840;
+  --good: #1a9060;
+  --warn: #a86800;
+  /* glow */
+  --glow:    0.45;
+  --bg-grid: rgba(120, 80, 20, 0.045);
+  color-scheme: light;
+}
+
+/* ============================================================
+   PALETTE × MODE: MATRIX DARK
+   Green-black surfaces; emerald accent.
+   ============================================================ */
+body[data-palette="matrix"][data-theme="dark"] {
+  /* surfaces — near-black with a green cast */
+  --bg:      #030d06;  /* cold green-black */
+  --rail:    #050f08;  /* recessed green-dark */
+  --panel:   #07140a;  /* base panel */
+  --panel-2: #0a1c0f;  /* raised panel */
+  --panel-3: #0e2415;  /* inputs / buttons */
+  /* borders — green-tinted hairlines */
+  --line:        rgba(60, 200, 100, 0.10);
+  --line-strong: rgba(70, 220, 110, 0.22);
+  /* text — cool green-tinted white */
+  --text:       #e4fded;
+  --text-dim:   #82c98c;
+  --text-faint: #456050;
+  /* accent */
+  --accent:     #34d399;
+  --accent-ink: #011a0e;
+  /* semantic */
+  --hot:  #f0387a;
+  --good: #34d399;  /* same as accent — green is the "good" hue */
+  --warn: #f5b945;
+  /* glow + grid */
+  --glow:    1;
+  --bg-grid: rgba(40, 160, 80, 0.045);
+  color-scheme: dark;
+}
+
+/* ============================================================
+   PALETTE × MODE: MATRIX LIGHT
+   Pale mint-tinted surfaces; emerald accent.
+   ============================================================ */
+body[data-palette="matrix"][data-theme="light"] {
+  /* surfaces — pale mint layers */
+  --bg:      #f0fdf5;  /* near-white mint */
+  --rail:    #d8f5e4;  /* mint-tinted rail */
+  --panel:   #e8faf0;  /* base panel */
+  --panel-2: #d0f0e0;  /* raised panel */
+  --panel-3: #bce8d2;  /* inputs / buttons */
+  /* borders — dark-on-mint hairlines */
+  --line:        rgba(10, 80, 40, 0.10);
+  --line-strong: rgba(10, 90, 45, 0.18);
+  /* text — dark green-slate */
+  --text:       #061a0e;
+  --text-dim:   #1d5030;
+  --text-faint: #467050;
+  /* accent */
+  --accent:     #0ea868;  /* darker emerald for light-bg contrast */
+  --accent-ink: #f0fff7;
+  /* semantic */
+  --hot:  #c41840;
+  --good: #0a8850;
+  --warn: #a86800;
+  /* glow */
+  --glow:    0.45;
+  --bg-grid: rgba(20, 100, 50, 0.045);
+  color-scheme: light;
+}
+
+/* ============================================================
+   PALETTE × MODE: SYNTHWAVE DARK
+   Deep purple-black surfaces; violet/magenta accent.
+   ============================================================ */
+body[data-palette="synthwave"][data-theme="dark"] {
+  /* surfaces — near-black with a deep purple cast */
+  --bg:      #080610;  /* purple near-black */
+  --rail:    #0b0918;  /* recessed purple-dark */
+  --panel:   #100d22;  /* base panel */
+  --panel-2: #16122e;  /* raised panel */
+  --panel-3: #1e1840;  /* inputs / buttons */
+  /* borders — purple-tinted hairlines */
+  --line:        rgba(160, 120, 215, 0.12);
+  --line-strong: rgba(180, 140, 230, 0.24);
+  /* text — cool lavender-white */
+  --text:       #f2eeff;
+  --text-dim:   #a890cc;
+  --text-faint: #66508a;
+  /* accent */
+  --accent:     #c084fc;
+  --accent-ink: #180b2e;
+  /* semantic */
+  --hot:  #f0387a;
+  --good: #45e0a0;
+  --warn: #f5b945;
+  /* glow + grid */
+  --glow:    1;
+  --bg-grid: rgba(100, 60, 180, 0.05);
+  color-scheme: dark;
+}
+
+/* ============================================================
+   PALETTE × MODE: SYNTHWAVE LIGHT
+   Soft lavender-white surfaces; violet accent.
+   ============================================================ */
+body[data-palette="synthwave"][data-theme="light"] {
+  /* surfaces — soft lavender-white layers */
+  --bg:      #f8f5ff;  /* near-white with lavender tint */
+  --rail:    #ece5fa;  /* lavender rail */
+  --panel:   #f3eefe;  /* base panel */
+  --panel-2: #e4d9f8;  /* raised panel */
+  --panel-3: #d4c6f0;  /* inputs / buttons */
+  /* borders — dark-on-lavender hairlines */
+  --line:        rgba(60, 20, 120, 0.10);
+  --line-strong: rgba(70, 25, 140, 0.18);
+  /* text — dark slate with purple warmth */
+  --text:       #160a2a;
+  --text-dim:   #4a2c7a;
+  --text-faint: #7c5ca8;
+  /* accent */
+  --accent:     #8b3ecf;  /* darker violet for light-bg contrast */
+  --accent-ink: #f8f2ff;
+  /* semantic */
+  --hot:  #c41840;
+  --good: #1a9060;
+  --warn: #a86800;
+  /* glow */
+  --glow:    0.45;
+  --bg-grid: rgba(80, 40, 160, 0.04);
+  color-scheme: light;
+}
+
+/* ============================================================
    DENSITY — COMPACT OVERRIDE
    Triggered by: document.body.setAttribute('data-density', 'compact')
    Comfortable (default) restored by: setAttribute('data-density', 'comfortable')
@@ -129,48 +397,48 @@ body[data-density="compact"] {
 }
 
 /* ============================================================
-   LIGHT THEME OVERRIDE
-   Triggered by: document.body.setAttribute('data-theme', 'light')
-   "System" theme = read prefers-color-scheme and set data-theme accordingly
-   in the ThemeProvider (feature-agent wires the config.theme → data-theme swap).
+   FONT-PAIR SWAPPING
+   Triggered by: document.body.setAttribute('data-font', 'X')
+   Default (no attribute or data-font="chakra") = Chakra Petch + IBM Plex Mono
+   from :root — no override needed.
+
+   Family names must match exactly what @fontsource registers.
+   If a font isn't loaded the fallback stack renders — acceptable.
+   NOTE: Orbitron is wide, Rajdhani is condensed. No per-font size
+   hacks applied here — just family swaps. Metrics differences are
+   acceptable and can be addressed per-component if needed later.
    ============================================================ */
-body[data-theme="light"] {
-  /* surfaces — reversed: light near-white */
-  --bg:      #f0f4f8;
-  --rail:    #e4eaf1;
-  --panel:   #eaf0f7;
-  --panel-2: #dde5ef;
-  --panel-3: #d4dce9;
 
-  /* borders */
-  --line:        rgba(60, 100, 140, 0.14);
-  --line-strong: rgba(60, 110, 160, 0.28);
-
-  /* text — dark on light */
-  --text:       #0d1a26;
-  --text-dim:   #3a5068;
-  --text-faint: #6c7e92;
-
-  /* accent-ink stays dark; accent retains the user's chosen color */
-
-  color-scheme: light;
+/* Chakra (default — explicit for completeness) */
+body[data-font="chakra"] {
+  --f-display: 'Chakra Petch', system-ui, sans-serif;
+  --f-ui:      'Chakra Petch', system-ui, sans-serif;
+  --f-body:    'Chakra Petch', system-ui, sans-serif;
+  --f-mono:    'IBM Plex Mono', ui-monospace, monospace;
 }
 
-/* system theme — defer to OS preference when data-theme="system" or absent */
-@media (prefers-color-scheme: light) {
-  body[data-theme="system"] {
-    --bg:      #f0f4f8;
-    --rail:    #e4eaf1;
-    --panel:   #eaf0f7;
-    --panel-2: #dde5ef;
-    --panel-3: #d4dce9;
-    --line:        rgba(60, 100, 140, 0.14);
-    --line-strong: rgba(60, 110, 160, 0.28);
-    --text:       #0d1a26;
-    --text-dim:   #3a5068;
-    --text-faint: #6c7e92;
-    color-scheme: light;
-  }
+/* Orbitron + JetBrains Mono — wide, geometric display character */
+body[data-font="orbitron"] {
+  --f-display: 'Orbitron', system-ui, sans-serif;
+  --f-ui:      'Orbitron', system-ui, sans-serif;
+  --f-body:    'Orbitron', system-ui, sans-serif;
+  --f-mono:    'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Rajdhani + Space Mono — condensed, high-density character */
+body[data-font="rajdhani"] {
+  --f-display: 'Rajdhani', system-ui, sans-serif;
+  --f-ui:      'Rajdhani', system-ui, sans-serif;
+  --f-body:    'Rajdhani', system-ui, sans-serif;
+  --f-mono:    'Space Mono', ui-monospace, monospace;
+}
+
+/* System — OS-native fallback stack */
+body[data-font="system"] {
+  --f-display: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --f-ui:      system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --f-body:    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --f-mono:    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 /* ============================================================

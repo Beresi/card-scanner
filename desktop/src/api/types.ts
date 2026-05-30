@@ -10,6 +10,8 @@ export type Density = 'comfortable' | 'compact';
 export type Importance = 'low' | 'normal' | 'high';
 export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'D';
 export type FoilPref = 'any' | 'foil' | 'nonfoil';
+export type ThemePalette = 'cyan' | 'amber' | 'matrix' | 'synthwave';
+export type FontChoice = 'chakra' | 'orbitron' | 'rajdhani' | 'system';
 
 // ---------------------------------------------------------------------------
 // Deal — the primary data type consumed by the Deal Feed view
@@ -75,6 +77,8 @@ export interface Config {
 
   // Display / UI
   theme: Theme;
+  theme_palette: ThemePalette;
+  font: FontChoice;
   accent_color: string;
   density: Density;
 
