@@ -96,6 +96,15 @@ const IMPORTANCE_OPTIONS: { value: Importance; label: string }[] = [
   { value: 'high',   label: 'High' },
 ];
 
+const CURRENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'USD', label: 'USD — US Dollar' },
+  { value: 'EUR', label: 'EUR — Euro' },
+  { value: 'GBP', label: 'GBP — British Pound' },
+  { value: 'CAD', label: 'CAD — Canadian Dollar' },
+  { value: 'AUD', label: 'AUD — Australian Dollar' },
+  { value: 'JPY', label: 'JPY — Japanese Yen' },
+];
+
 // ---------------------------------------------------------------------------
 // Row helper
 // ---------------------------------------------------------------------------
@@ -422,7 +431,47 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
       </Panel>
 
       {/* ================================================================ */}
-      {/* 4. SCAN & DATA                                                   */}
+      {/* 4. DEAL DETECTION                                               */}
+      {/* ================================================================ */}
+      <Panel title="Deal detection" className="set-panel">
+        <p className="set-blurb">
+          Floors stop bulk/penny cards from showing as false 50%-off &ldquo;deals&rdquo;.
+        </p>
+
+        <Row label="Currency" hint="matches your CardTrader account · no conversion">
+          <Select
+            value={config.currency}
+            options={CURRENCY_OPTIONS}
+            onChange={(v) => cfg.mutate({ currency: v })}
+            size="sm"
+          />
+        </Row>
+
+        <Row label="Minimum listing price" hint="ignore deals on cards cheaper than this">
+          <NumInput
+            value={config.min_price_cents / 100}
+            min={0}
+            max={10000}
+            onChange={(v) => cfg.mutate({ min_price_cents: Math.round(v * 100) })}
+            suffix={config.currency}
+            aria-label="Minimum listing price"
+          />
+        </Row>
+
+        <Row label="Minimum savings" hint="ignore deals whose absolute discount is below this">
+          <NumInput
+            value={config.min_savings_cents / 100}
+            min={0}
+            max={10000}
+            onChange={(v) => cfg.mutate({ min_savings_cents: Math.round(v * 100) })}
+            suffix={config.currency}
+            aria-label="Minimum absolute savings"
+          />
+        </Row>
+      </Panel>
+
+      {/* ================================================================ */}
+      {/* 5. SCAN & DATA                                                   */}
       {/* ================================================================ */}
       <Panel title="Scan & data" className="set-panel">
         <Row label="Schedule" hint="read-only in v1">
@@ -430,11 +479,6 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             0 * * * *
             <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>· hourly · UTC</span>
           </span>
-        </Row>
-
-        <Row label="Account currency" hint="per-deal; no conversion in v1">
-          {/* Config has no currency field — currency lives per-deal row. Display placeholder. */}
-          <span className="cb-mono" style={{ color: 'var(--text-dim)' }}>—</span>
         </Row>
 
         <Row label="CardTrader token" hint="GET /info">
@@ -454,7 +498,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
       </Panel>
 
       {/* ================================================================ */}
-      {/* 5. MAINTENANCE                                                   */}
+      {/* 6. MAINTENANCE                                                   */}
       {/* ================================================================ */}
       <Panel title="Maintenance" className="set-panel">
         <Row label="Replay boot sequence" hint="re-runs the startup animation">

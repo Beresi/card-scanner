@@ -67,6 +67,10 @@ function defaultSettings(
     threshold_pct: 50,
     cohort_size: 10,
     min_cohort: 5,
+    // Floors set to 0 so existing §16 tests (which use penny-scale prices) remain valid.
+    // Tests that exercise the floors override these explicitly.
+    min_price_cents: 0,
+    min_savings_cents: 0,
     importance: 'normal',
     telegram_enabled: false,
     telegram_min_discount_pct: 60,
@@ -300,5 +304,154 @@ describe('§16 case 5 — foil filter: foil_pref=nonfoil ignores foil listings e
 
     expect(result).not.toBeNull();
     expect(result!.product.id).toBe(cheapFoil.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Absolute deal floors — PENNY-CARD false-positive suppression
+// ---------------------------------------------------------------------------
+
+describe('absolute deal floors — min_price_cents + min_savings_cents', () => {
+  // PENNY-CARD case: ~$0.18 vs median ~$0.32; 44% off passes the % gate but
+  // the absolute savings is only 14¢ — below both default floors.
+  // With real defaults (min_price_cents=200, min_savings_cents=100) this
+  // is correctly classified as NOT a deal.
+  it('PENNY-CARD: 18¢ cheapest vs median 32¢ — fails floors → null (no false positive)', () => {
+    const candidate = makeProduct(18);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    // 18¢ fails min_price_cents=200 AND savingsCents=14 fails min_savings_cents=100
+    expect(result).toBeNull();
+  });
+
+  it('PENNY-CARD: even at exactly 50% off (16¢ vs 32¢), fails floors → null', () => {
+    // This is the §16 case-1 scenario but with real production floors applied.
+    // 16¢ < 200¢ (min_price_cents) → not a deal in a real config.
+    const candidate = makeProduct(16);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    expect(result).toBeNull();
+  });
+
+  // GENUINE DEAL: $5.00 candidate vs $11.00 cohort median — 55% off, $6 savings.
+  // Passes all three gates: % (55% ≥ 50%), price (500¢ ≥ 200¢), savings (600¢ ≥ 100¢).
+  it('GENUINE-DEAL: 500¢ candidate vs 1100¢ median — passes all three gates', () => {
+    const candidate = makeProduct(500);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(1100));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.price.cents).toBe(500);
+    expect(result!.baselineCents).toBe(1100);
+    expect(result!.savingsCents).toBe(600);
+    // discountPct = round((1 - 500/1100)*100) = round(54.5...) = 55
+    expect(result!.discountPct).toBe(55);
+  });
+
+  // BOUNDARY — tiny savings only: cheap card at $2.50 vs median $3.00 → 17% off.
+  // Fails the % gate (17% < 50%) — already null for that reason.
+  // Extra check: also fails savings floor (50¢ < 100¢) even with a loose % gate.
+  it('CHEAP-CARD savings-floor: 250¢ vs 300¢ median — tiny savings (50¢ < 100¢) → null', () => {
+    const candidate = makeProduct(250);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(300));
+
+    // Use a very loose % threshold (10%) so only the savings floor blocks it.
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ threshold_pct: 10, min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    // savingsCents = 300 - 250 = 50 < 100 → fails min_savings_cents → null
+    expect(result).toBeNull();
+  });
+
+  // BOUNDARY — price floor exactly met: candidate = min_price_cents.
+  it('price floor boundary: candidate exactly at min_price_cents — passes (inclusive >=)', () => {
+    // candidate = 200¢ (exactly at floor), cohort median = 500¢, savings = 300¢
+    // % gate: 200 <= (50/100)*500 = 250 → true; price: 200 >= 200 → true; savings: 300 >= 100 → true
+    const candidate = makeProduct(200);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(500));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.price.cents).toBe(200);
+    expect(result!.savingsCents).toBe(300);
+  });
+
+  // BOUNDARY — price one cent below floor: candidate = min_price_cents - 1.
+  it('price floor boundary: candidate one cent below min_price_cents → null', () => {
+    // candidate = 199¢, floor = 200¢ → fails min_price_cents
+    const candidate = makeProduct(199);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(500));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    expect(result).toBeNull();
+  });
+
+  // BOUNDARY — savings floor exactly met: savingsCents = min_savings_cents.
+  it('savings floor boundary: savings exactly at min_savings_cents — passes (inclusive >=)', () => {
+    // candidate = 400¢, cohort median = 500¢, savings = 100¢ (exactly at floor)
+    // % gate: 400 <= (50/100)*500 = 250 → false… adjust: use threshold_pct=85
+    // 400 <= (85/100)*500 = 425 → true; savings = 100 >= 100 → true; price: 400 >= 200 → true
+    const candidate = makeProduct(400);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(500));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ threshold_pct: 85, min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.savingsCents).toBe(100);
+  });
+
+  // BOUNDARY — savings one cent below floor.
+  it('savings floor boundary: savings one cent below min_savings_cents → null', () => {
+    // candidate = 401¢, cohort median = 500¢, savings = 99¢ < 100¢
+    const candidate = makeProduct(401);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(500));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ threshold_pct: 85, min_price_cents: 200, min_savings_cents: 100 }),
+    );
+
+    expect(result).toBeNull();
+  });
+
+  // With floors disabled (set to 0/0), a cheap card at 50% off still fires.
+  it('floors disabled (0, 0): 16¢ vs 32¢ at 50% threshold still fires (backward compat)', () => {
+    const candidate = makeProduct(16);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ min_price_cents: 0, min_savings_cents: 0 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.discountPct).toBe(50);
   });
 });

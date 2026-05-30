@@ -45,9 +45,12 @@ export function resolveEffective(
     // Uses `??` so that an explicit 0 is honored (0 = "flag every listing").
     threshold_pct: ticket.threshold_pct ?? config.default_threshold_pct,
 
-    // cohort_size / min_cohort: config-only, no per-ticket column.
+    // cohort_size / min_cohort / min_price_cents / min_savings_cents:
+    // config-only, no per-ticket override column.
     cohort_size: config.cohort_size,
     min_cohort: config.min_cohort,
+    min_price_cents: config.min_price_cents,
+    min_savings_cents: config.min_savings_cents,
 
     // importance: NOT NULL — no config fallback.
     importance: ticket.importance,

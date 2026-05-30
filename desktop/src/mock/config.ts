@@ -14,6 +14,9 @@ export const MOCK_CONFIG: Config = {
   default_min_condition: 'NM',
   cohort_size: 10,
   min_cohort: 5,
+  currency: 'USD',
+  min_price_cents: 200,
+  min_savings_cents: 100,
 
   // New-ticket defaults (displayed as inherit baseline in watchlist inspector)
   new_ticket_foil_pref: 'any',

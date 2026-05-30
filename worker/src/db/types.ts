@@ -101,6 +101,13 @@ export interface ConfigRow {
   theme_palette: string;                    // NOT NULL DEFAULT 'cyan'
   font: string;                             // NOT NULL DEFAULT 'chakra'
 
+  // Display currency (informational — no conversion; matches CardTrader account currency)
+  currency: string;                        // NOT NULL DEFAULT 'USD'
+
+  // Absolute deal floors (config-level, global)
+  min_price_cents: number;                 // NOT NULL DEFAULT 200
+  min_savings_cents: number;               // NOT NULL DEFAULT 100
+
   // Maintenance / data
   deal_retention_days: number;             // NOT NULL DEFAULT 30
   timezone: string | null;                 // nullable DEFAULT 'Asia/Jerusalem'
@@ -171,6 +178,8 @@ export interface EffectiveSettings {
   threshold_pct: number;
   cohort_size: number;         // from config only (no per-ticket override column)
   min_cohort: number;          // from config only (no per-ticket override column)
+  min_price_cents: number;     // from config only — candidate must cost ≥ this
+  min_savings_cents: number;   // from config only — baseline − candidate must be ≥ this
   importance: Importance;
   telegram_enabled: boolean;
   telegram_min_discount_pct: number;

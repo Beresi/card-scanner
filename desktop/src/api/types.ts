@@ -62,6 +62,9 @@ export interface Config {
   default_min_condition: string;
   cohort_size: number;
   min_cohort: number;
+  currency: string;
+  min_price_cents: number;
+  min_savings_cents: number;
 
   // New-ticket defaults (displayed as inherit baseline in the watchlist inspector)
   new_ticket_foil_pref: FoilPref;

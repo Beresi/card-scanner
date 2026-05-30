@@ -70,8 +70,16 @@ function foilMatches(
 /**
  * Evaluate one blueprint's listings against resolved effective settings.
  *
- * Returns a DealResult when the cheapest qualifying copy is priced at or below
- * threshold_pct % of the cohort median. Returns null on thin-market or no-deal.
+ * Returns a DealResult when ALL three conditions hold:
+ *  1. Candidate price ≤ threshold_pct % of the cohort median (% gate).
+ *  2. Candidate price ≥ min_price_cents (absolute price floor — suppresses bulk/penny-card
+ *     false positives where the savings are trivially small in dollar terms).
+ *  3. (Baseline − candidate) ≥ min_savings_cents (absolute savings floor — same guard).
+ *
+ * The authoritative verdict is the integer-cents comparison for all three conditions;
+ * the rounded discountPct is informational only and never gates the verdict.
+ *
+ * Returns null on thin-market or no-deal.
  *
  * Pure: same inputs → same output. No side effects.
  */
@@ -128,15 +136,25 @@ export function evaluateBlueprint(
 
   // ------------------------------------------------------------------
   // 6. Discount + verdict.
-  //    Gate on the cents comparison — NEVER branch the verdict on
-  //    discountPct (which is a rounded integer and may differ by 1
-  //    at the boundary).
+  //
+  //    All three conditions must hold (integer-cents comparisons only —
+  //    NEVER branch on the rounded discountPct):
+  //      a) % gate:          candidate.price.cents <= (threshold_pct/100) * baseline
+  //      b) price floor:     candidate.price.cents >= min_price_cents
+  //      c) savings floor:   savingsCents          >= min_savings_cents
+  //
+  //    Floors (b) and (c) suppress bulk/penny-card false positives where
+  //    the absolute saving is trivially small even if the % looks large.
   // ------------------------------------------------------------------
+  const savingsCents = baselineCents - candidate.price.cents;
   const discountPct = Math.round(
     (1 - candidate.price.cents / baselineCents) * 100,
   );
+
   const isDeal =
-    candidate.price.cents <= (settings.threshold_pct / 100) * baselineCents;
+    candidate.price.cents <= (settings.threshold_pct / 100) * baselineCents &&
+    candidate.price.cents >= settings.min_price_cents &&
+    savingsCents >= settings.min_savings_cents;
 
   if (!isDeal) {return null;}
 
@@ -145,6 +163,6 @@ export function evaluateBlueprint(
     baselineCents,
     cohortSize: cohort.length,
     discountPct,
-    savingsCents: baselineCents - candidate.price.cents,
+    savingsCents,
   };
 }

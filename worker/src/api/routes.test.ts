@@ -284,6 +284,76 @@ describe('PATCH /api/config', () => {
     expect(body.id).toBe(1);
     expect(body.default_threshold_pct).toBe(45);
   });
+
+  it('schema defaults: currency is USD, min_price_cents is 200, min_savings_cents is 100', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/config`);
+    expect(res.status).toBe(200);
+    const body = await res.json<ConfigRow>();
+    expect(body.currency).toBe('USD');
+    expect(body.min_price_cents).toBe(200);
+    expect(body.min_savings_cents).toBe(100);
+    // Money is integer
+    expect(Number.isInteger(body.min_price_cents)).toBe(true);
+    expect(Number.isInteger(body.min_savings_cents)).toBe(true);
+  });
+
+  it('PATCH currency persists and GET reflects the change', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const patchRes = await PATCH(env, `${BASE}/api/config`, { currency: 'EUR' });
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json<ConfigRow>();
+    expect(patched.currency).toBe('EUR');
+
+    const getRes = await GET(env, `${BASE}/api/config`);
+    const got = await getRes.json<ConfigRow>();
+    expect(got.currency).toBe('EUR');
+  });
+
+  it('PATCH min_price_cents persists as integer cents', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const patchRes = await PATCH(env, `${BASE}/api/config`, { min_price_cents: 500 });
+    expect(patchRes.status).toBe(200);
+    const body = await patchRes.json<ConfigRow>();
+    expect(body.min_price_cents).toBe(500);
+    expect(Number.isInteger(body.min_price_cents)).toBe(true);
+
+    const getRes = await GET(env, `${BASE}/api/config`);
+    const got = await getRes.json<ConfigRow>();
+    expect(got.min_price_cents).toBe(500);
+  });
+
+  it('PATCH min_savings_cents persists as integer cents', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const patchRes = await PATCH(env, `${BASE}/api/config`, { min_savings_cents: 250 });
+    expect(patchRes.status).toBe(200);
+    const body = await patchRes.json<ConfigRow>();
+    expect(body.min_savings_cents).toBe(250);
+    expect(Number.isInteger(body.min_savings_cents)).toBe(true);
+
+    const getRes = await GET(env, `${BASE}/api/config`);
+    const got = await getRes.json<ConfigRow>();
+    expect(got.min_savings_cents).toBe(250);
+  });
+
+  it('PATCH currency + floors together in one request', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const patchRes = await PATCH(env, `${BASE}/api/config`, {
+      currency: 'GBP',
+      min_price_cents: 300,
+      min_savings_cents: 150,
+    });
+    expect(patchRes.status).toBe(200);
+    const body = await patchRes.json<ConfigRow>();
+    expect(body.currency).toBe('GBP');
+    expect(body.min_price_cents).toBe(300);
+    expect(body.min_savings_cents).toBe(150);
+  });
 });
 
 // ---------------------------------------------------------------------------

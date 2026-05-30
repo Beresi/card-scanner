@@ -27,6 +27,9 @@ const BASE_CONFIG: ConfigRow = {
   default_min_condition: 'Near Mint',
   cohort_size: 10,
   min_cohort: 5,
+  currency: 'USD',
+  min_price_cents: 200,
+  min_savings_cents: 100,
   new_ticket_foil_pref: 'any',
   new_ticket_allow_graded: 0,
   new_ticket_importance: 'normal',
@@ -222,5 +225,39 @@ describe('resolveEffective — NOT NULL ticket columns pass through', () => {
     const ticket: WatchlistRow = { ...INHERITING_TICKET, importance: 'high' };
     const result = resolveEffective(ticket, BASE_CONFIG);
     expect(result.importance).toBe('high');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Config-only deal-floor fields (min_price_cents, min_savings_cents)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — deal-floor config-only fields', () => {
+  it('min_price_cents comes from config', () => {
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.min_price_cents).toBe(200); // BASE_CONFIG.min_price_cents
+  });
+
+  it('min_savings_cents comes from config', () => {
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.min_savings_cents).toBe(100); // BASE_CONFIG.min_savings_cents
+  });
+
+  it('reflects a config change in min_price_cents — moving baseline', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, min_price_cents: 500 };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.min_price_cents).toBe(500);
+  });
+
+  it('reflects a config change in min_savings_cents — moving baseline', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, min_savings_cents: 250 };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.min_savings_cents).toBe(250);
+  });
+
+  it('min_price_cents = 0 is honored (zero is a valid floor)', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, min_price_cents: 0 };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.min_price_cents).toBe(0);
   });
 });

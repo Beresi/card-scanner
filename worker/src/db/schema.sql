@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS config (
   theme_palette                 TEXT    NOT NULL DEFAULT 'cyan',
   font                          TEXT    NOT NULL DEFAULT 'chakra',
 
+  -- Display currency (informational — no conversion; should match CardTrader account currency)
+  currency                      TEXT    NOT NULL DEFAULT 'USD',
+
+  -- Absolute deal floors — both must hold in addition to the % threshold gate
+  min_price_cents               INTEGER NOT NULL DEFAULT 200,  -- candidate must cost ≥ $2.00
+  min_savings_cents             INTEGER NOT NULL DEFAULT 100,  -- baseline − candidate must be ≥ $1.00
+
   -- Maintenance / data
   deal_retention_days           INTEGER NOT NULL DEFAULT 30,   -- 0 = keep forever
   timezone                      TEXT             DEFAULT 'Asia/Jerusalem',
