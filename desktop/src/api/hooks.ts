@@ -128,6 +128,10 @@ export function useHealth() {
   return useQuery<Health, Error>({
     queryKey: ['health'] as const,
     queryFn: getHealth,
+    // Poll so the chunked scan progress (scan_done / scan_total) climbs live,
+    // and any stale cached health (e.g. from before a deploy) self-corrects.
+    refetchInterval: 15_000,
+    staleTime: 0,
   });
 }
 
@@ -144,6 +148,9 @@ export function useScanRuns() {
   return useQuery<ScanRun[], Error>({
     queryKey: ['scanRuns'] as const,
     queryFn: getScanRuns,
+    // Poll so the Health view's run log + counts refresh as the cron ticks.
+    refetchInterval: 30_000,
+    staleTime: 0,
   });
 }
 
