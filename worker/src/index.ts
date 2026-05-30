@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { runScan } from './scan/scanner';
 import { scanRouter } from './api/scan';
 import { telegramRouter } from './api/telegram';
@@ -23,6 +24,21 @@ export interface Env {
 
 // ─── Hono app ─────────────────────────────────────────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
+
+// ── CORS ───────────────────────────────────────────────────────────────────────
+// The desktop client is a browser/webview, so cross-origin /api/* calls need CORS.
+// Registered BEFORE the auth gate so the preflight OPTIONS (which carries no
+// Authorization header) is answered with CORS headers instead of a 401.
+// The bearer token — not the origin — is the security boundary (no cookies are
+// used), so we simply reflect trusted dev/desktop origins: localhost (any port,
+// Vite dev + `tauri dev`) and the Tauri production webview origin (tauri.localhost).
+const ALLOWED_ORIGIN = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|(tauri|https?):\/\/tauri\.localhost)$/;
+app.use('/api/*', cors({
+  origin: (origin) => (origin && ALLOWED_ORIGIN.test(origin) ? origin : ''),
+  allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Authorization', 'Content-Type'],
+  maxAge: 86400,
+}));
 
 // ── Auth gate ────────────────────────────────────────────────────────────────
 // Every /api/* route is behind this middleware.  It compares the Authorization
