@@ -25,6 +25,7 @@
 import { useEffect } from 'react';
 
 import { useConfig } from '../api/hooks';
+import { paintFavicon } from '../lib/favicon';
 
 export function useApplyAppearance(): void {
   const { data: config } = useConfig();
@@ -54,6 +55,10 @@ export function useApplyAppearance(): void {
       // descendants. Setting it on <html> would be shadowed by the palette's
       // body-level declaration.
       document.body.style.setProperty('--accent', config.accent_color);
+
+      // Repaint the browser tab favicon in the accent color (follows the
+      // in-app accent live; no-ops in non-DOM/headless contexts).
+      void paintFavicon(config.accent_color);
     }
 
     applyTheme();
