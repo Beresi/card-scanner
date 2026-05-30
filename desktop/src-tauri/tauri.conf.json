@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Card // Broker",
+  "productName": "Card Broker",
   "identifier": "com.cardbroker.desktop",
   "version": "0.1.0",
   "build": {
