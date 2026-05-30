@@ -232,6 +232,8 @@ body.cb-scanlines::after {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Content gutter — neither .tele nor .insp self-pad, so the rail owns it. */
+  padding: 16px 16px 24px;
 }
 
 /* ============================================================

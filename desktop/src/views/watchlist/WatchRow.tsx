@@ -164,7 +164,6 @@ export function WatchRow({
         <Switch
           on={item.active === 1}
           onChange={() => onToggleActive(item.id)}
-          label="active"
           aria-label={`${item.label} active`}
         />
       </span>

@@ -23,7 +23,7 @@
 .wt-head,
 .wr {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 60px 78px 64px 70px 44px 50px 46px;
+  grid-template-columns: 34px minmax(0, 1fr) 60px 78px 64px 70px 44px 40px 52px;
   align-items: center;
   gap: 10px;
   padding: 0 14px;
