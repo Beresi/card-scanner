@@ -33,6 +33,7 @@ import type {
   FontChoice,
   FoilPref,
   Importance,
+  ScanMode,
   Theme,
   ThemePalette,
 } from '../../api/types';
@@ -100,6 +101,11 @@ const IMPORTANCE_OPTIONS: { value: Importance; label: string }[] = [
   { value: 'low',    label: 'Low' },
   { value: 'normal', label: 'Normal' },
   { value: 'high',   label: 'High' },
+];
+
+const SCAN_MODE_OPTIONS: { value: ScanMode; label: string }[] = [
+  { value: 'chunked',  label: 'Chunked (free)' },
+  { value: 'wholeset', label: 'Whole-set (paid)' },
 ];
 
 const CURRENCY_OPTIONS: { value: string; label: string }[] = [
@@ -512,11 +518,37 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
         return (
           <>
             <Panel title="Scan & data" className="set-panel">
-              <Row label="Schedule" hint="read-only in v1">
+              <Row label="Schedule" hint="read-only · every 2 min tick">
                 <span className="set-cron">
-                  0 * * * *
-                  <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>· hourly · UTC</span>
+                  */2 * * * *
+                  <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>· chunked rotation · UTC</span>
                 </span>
+              </Row>
+
+              <Row
+                label="Scan mode"
+                hint="Chunked = free tier, rotates cards over ~hourly. Whole-set = scans full sets at once, needs paid Workers."
+              >
+                <Segmented
+                  value={c.scan_mode}
+                  options={SCAN_MODE_OPTIONS as { value: string; label: string }[]}
+                  onChange={(v) => cfg.mutate({ scan_mode: v as ScanMode })}
+                  size="sm"
+                />
+              </Row>
+
+              <Row
+                label="Batch size"
+                hint="cards scanned per 2-min tick (keep ≤49 on the free tier · only applies to chunked)"
+              >
+                <NumInput
+                  value={c.scan_batch_size}
+                  min={5}
+                  max={49}
+                  onChange={(v) => cfg.mutate({ scan_batch_size: Math.round(v) })}
+                  suffix="cards"
+                  aria-label="Scan batch size"
+                />
               </Row>
 
               <Row label="CardTrader token" hint="GET /info">

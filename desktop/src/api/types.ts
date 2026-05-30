@@ -12,6 +12,7 @@ export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'D';
 export type FoilPref = 'any' | 'foil' | 'nonfoil';
 export type ThemePalette = 'cyan' | 'obsidian' | 'matrix' | 'synthwave';
 export type FontChoice = 'chakra' | 'orbitron' | 'rajdhani' | 'system';
+export type ScanMode = 'chunked' | 'wholeset';
 
 // ---------------------------------------------------------------------------
 // Deal — the primary data type consumed by the Deal Feed view
@@ -84,6 +85,10 @@ export interface Config {
   font: FontChoice;
   accent_color: string;
   density: Density;
+
+  // Scan mode
+  scan_mode: ScanMode;
+  scan_batch_size: number;
 
   // Maintenance
   deal_retention_days: number;

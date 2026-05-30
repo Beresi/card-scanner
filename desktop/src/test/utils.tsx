@@ -72,6 +72,8 @@ export const FIXTURE_CONFIG: Config = {
   font: 'chakra',
   accent_color: '#22d3ee',
   density: 'comfortable',
+  scan_mode: 'chunked',
+  scan_batch_size: 40,
   deal_retention_days: 30,
   timezone: 'UTC',
   updated_at: '2026-05-30 10:00:00',

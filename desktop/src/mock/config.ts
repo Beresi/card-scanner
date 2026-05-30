@@ -37,6 +37,10 @@ export const MOCK_CONFIG: Config = {
   accent_color: '#22d3ee',
   density: 'comfortable',
 
+  // Scan mode
+  scan_mode: 'chunked',
+  scan_batch_size: 40,
+
   // Maintenance
   deal_retention_days: 30,
   timezone: 'Asia/Jerusalem',
