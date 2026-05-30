@@ -25,6 +25,7 @@ import {
 } from 'react';
 
 import { useEffects } from '../../effects/EffectsContext';
+import { BrandGlyph } from '../../components/BrandGlyph';
 
 // ---------------------------------------------------------------------------
 // Boot lines (from the design handoff boot.jsx)
@@ -179,7 +180,7 @@ export function BootSequence({ onDone }: BootSequenceProps) {
         {/* ---- Logo phase ---- */}
         {(phase === 'logo' || phase === 'out') && (
           <div className="boot-logo" aria-label="Card Broker logo">
-            <div className="boot-logo-mark" aria-hidden="true">◈</div>
+            <BrandGlyph size={56} glow={30} className="boot-logo-mark" />
             <div className="boot-logo-text">
               <span className="boot-logo-1">CARD</span>
               <span className="boot-logo-slash">//</span>

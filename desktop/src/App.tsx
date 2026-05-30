@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useDeals, useRunScan } from './api/hooks';
+import { BrandGlyph } from './components/BrandGlyph';
 import { Clock } from './components/Clock';
 import { Icon } from './components/Icon';
 import type { IconName } from './components/Icon';
@@ -254,7 +255,7 @@ export function App() {
         <aside className="cb-rail-left" aria-label="Main navigation">
           {/* Brand mark */}
           <div className="rail-brand">
-            <span className="rail-glyph" aria-hidden="true">◈</span>
+            <BrandGlyph size={22} glow={12} className="rail-glyph" />
             <span className="rail-brand-text">
               <b>CARD</b><span className="rail-slash">//</span>BROKER
             </span>
