@@ -38,9 +38,17 @@ import {
   listActiveWatchlist,
   getConfig,
   upsertDeal,
+  markTelegramSent,
 } from '../db/repo';
 import { resolveEffective } from '../db/resolve';
-import type { DealInsert, ScanCounts, WatchlistRow } from '../db/types';
+import { shouldNotify } from '../telegram/routing';
+import { isTelegramConfigured, sendDeals } from '../telegram/notifier';
+import type {
+  DealInsert,
+  EffectiveSettings,
+  ScanCounts,
+  WatchlistRow,
+} from '../db/types';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -93,11 +101,12 @@ export async function runScan(
   let blueprintsScanned = 0;
   let apiCalls = 0;
   let dealsFound = 0;
-  const telegramSent = 0; // Phase 2: telegram-agent increments this
+  let telegramSent = 0; // incremented in Step 6 when Telegram is configured
   let runError: string | null = null;
 
-  // New-deal rows eligible for Telegram routing (Phase 2 drop-in point).
-  const newDeals: DealInsert[] = [];
+  // New-deal rows eligible for Telegram routing, paired with the resolved
+  // (§9a) settings the routing predicate needs. `eff` is captured per item.
+  const newDeals: { deal: DealInsert; eff: EffectiveSettings }[] = [];
 
   // Step 2: Create ONE client instance for the whole run.
   // The factory binds the throttle queue to the instance — one instance means
@@ -153,9 +162,9 @@ export async function runScan(
           {
             onWatchItemScanned: () => { watchItemsScanned++; },
             onBlueprintScanned: () => { blueprintsScanned++; },
-            onNewDeal: (deal) => {
+            onNewDeal: (deal, eff) => {
               dealsFound++;
-              newDeals.push(deal);
+              newDeals.push({ deal, eff });
             },
           },
         );
@@ -180,15 +189,58 @@ export async function runScan(
       }
     }
 
-    // Step 6 (Phase 2 — telegram-agent drop-in):
-    // Route and batch-send new deals to Telegram.
-    // newDeals holds every truly-inserted DealInsert from this run.
-    // For each deal: run shouldNotify(deal, eff, currentHour) → if true, send.
-    // Mark telegram_sent / telegram_sent_at in the deals table.
-    // Increment telegramSent for each message successfully queued/sent.
-    // Do NOT implement here — leave for the telegram-agent in Phase 2.
-    // telegramSent remains 0 until Phase 2 lands.
-    void newDeals; // suppress "declared but never read" until Phase 2 uses it
+    // Step 6: Route new deals to Telegram (PRD §8) — guarded + non-fatal.
+    //
+    // GUARD: nothing runs until both Telegram secrets are present. While
+    // unconfigured (the Phase-2 stub state) this whole block is skipped —
+    // telegramSent stays 0 and no deal is marked telegram_sent, so nothing is
+    // "burned" before the bot is wired. When the secrets land, this goes live
+    // with no code change.
+    //
+    // NON-FATAL: a Telegram failure must never fail the scan. Deals are already
+    // persisted (Step 5) and shown in the app feed; a send error is logged and
+    // swallowed so the scan_runs row still closes cleanly.
+    //
+    // Quiet-hours/digest is PRD §8 v1-OPTIONAL — the predicate supports it, but
+    // we pass quiet:null here; the hold/digest mechanism is deferred (see plan).
+    if (isTelegramConfigured(env)) {
+      try {
+        // newDeals carry telegram_sent:false (just inserted this run).
+        const passing = newDeals
+          .filter(({ deal, eff }) =>
+            shouldNotify(
+              {
+                discount_pct: deal.discount_pct,
+                price_cents: deal.price_cents,
+                baseline_cents: deal.baseline_cents,
+                telegram_sent: false,
+              },
+              eff,
+              undefined,
+              null,
+            ).send,
+          )
+          .map(({ deal }) => deal);
+
+        const sent = await sendDeals(passing, env);
+        if (sent > 0) {
+          // Mark only after the batch is confirmed delivered (one push per
+          // product_id, ever — §8 dedupe criterion 4).
+          for (const deal of passing) {
+            await markTelegramSent(env.DB, deal.product_id);
+          }
+          telegramSent = sent;
+        }
+      } catch (tgErr) {
+        // Never log the token; counts + message only (error-handling skill).
+        console.error('[scanner] telegram routing/send failed', {
+          runId,
+          trigger: opts.trigger,
+          newDeals: newDeals.length,
+          error: tgErr instanceof Error ? tgErr.message : String(tgErr),
+        });
+      }
+    }
   } catch (err) {
     // Whole-run failure: record the error; the finally still closes the row.
     runError = err instanceof Error ? err.message : 'unknown scan failure';
@@ -235,7 +287,7 @@ export async function runScan(
 interface ScanItemCallbacks {
   onWatchItemScanned: () => void;
   onBlueprintScanned: () => void;
-  onNewDeal: (deal: DealInsert) => void;
+  onNewDeal: (deal: DealInsert, eff: EffectiveSettings) => void;
 }
 
 /**
@@ -322,7 +374,7 @@ async function scanItem(
     // Conflicts = already-known listing; skip Telegram, do not re-insert.
     const isNew = await upsertDeal(db, deal);
     if (isNew) {
-      callbacks.onNewDeal(deal);
+      callbacks.onNewDeal(deal, eff);
     }
   }
 }

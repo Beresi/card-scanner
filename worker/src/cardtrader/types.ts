@@ -111,9 +111,15 @@ export type MarketplaceQuery =
 // ---------------------------------------------------------------------------
 
 export interface Info {
-  username: string;
-  // Additional wire fields are not read; the index signature accepts them.
-  [key: string]: unknown;
+  /** Account id — a stable, always-present token-liveness signal. */
+  id: number;
+  /** Account display name (may be empty). */
+  name: string;
+  /** Numeric user id behind the token. */
+  user_id: number;
+  // NOTE: the real /api/v2/info response ALSO carries `shared_secret` — itself a
+  // secret. We deliberately do NOT include or retain it (never stored, never
+  // logged). Only the non-sensitive identifying fields above are kept.
 }
 
 // ---------------------------------------------------------------------------
@@ -180,8 +186,12 @@ export function parseMarketplaceResponse(raw: unknown): MarketplaceResponse {
 }
 
 /**
- * Validates that `raw` carries at minimum a non-empty `username` string.
- * Extra wire fields are accepted via the Info index signature.
+ * Validate the GET /api/v2/info response (token-liveness check).
+ *
+ * The real CardTrader v2 response is `{ id, name, shared_secret, user_id }`.
+ * A non-401 carrying a numeric `id` is sufficient proof the token is valid.
+ * We extract ONLY the non-sensitive identifying fields and deliberately drop
+ * `shared_secret` so that secret is never retained, returned, or logged.
  */
 export function parseInfo(raw: unknown): Info {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -193,14 +203,18 @@ export function parseInfo(raw: unknown): Info {
 
   const obj = raw as Record<string, unknown>;
 
-  if (typeof obj['username'] !== 'string' || obj['username'].length === 0) {
+  if (typeof obj['id'] !== 'number') {
     throw new CardTraderError(
-      '/info response: missing or empty "username" field',
+      '/info response: missing numeric "id" field',
       '/info',
     );
   }
 
-  return obj as Info;
+  return {
+    id: obj['id'],
+    name: typeof obj['name'] === 'string' ? obj['name'] : '',
+    user_id: typeof obj['user_id'] === 'number' ? obj['user_id'] : obj['id'],
+  };
 }
 
 // ---------------------------------------------------------------------------

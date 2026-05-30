@@ -230,3 +230,31 @@ export async function upsertDeal(
   // re-query and diff, as the skill and PRD §7/§13 both require.
   return (res.meta.changes ?? 0) > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Telegram dedupe mark (PRD §8 — one push per product_id, ever)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a deal as pushed to Telegram.
+ *
+ * Sets `telegram_sent = 1` and `telegram_sent_at = datetime('now')` for the
+ * row with the given `product_id` (the UNIQUE dedupe column — a `DealInsert`
+ * carries no row `id`, so we key on `product_id`).  Called by the scanner only
+ * AFTER `notifier.sendDeals` confirms the batch was delivered, so a held or
+ * not-yet-configured run never marks anything sent (criterion 4 in §8 routing).
+ */
+export async function markTelegramSent(
+  db: D1Database,
+  productId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE deals
+          SET telegram_sent    = 1,
+              telegram_sent_at  = datetime('now')
+        WHERE product_id = ?`,
+    )
+    .bind(productId)
+    .run();
+}

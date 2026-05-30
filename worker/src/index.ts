@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { runScan } from './scan/scanner';
 import { scanRouter } from './api/scan';
+import { telegramRouter } from './api/telegram';
 
 // ─── Environment bindings ─────────────────────────────────────────────────────
 // DB        — Cloudflare D1 binding (name "DB" matches wrangler.toml [[d1_databases]])
@@ -50,6 +51,11 @@ app.get('/api/health', (c) => {
 // POST /api/scan/run-now — same runScan entry point as the cron (PRD §4/§11).
 app.route('/api/scan', scanRouter);
 
+// ── Telegram router (Phase 2) ─────────────────────────────────────────────────
+// POST /api/telegram/test — confirm bot+chat wiring (PRD §10).  Inert until the
+// Telegram secrets are provisioned (notifier guards every send).
+app.route('/api/telegram', telegramRouter);
+
 // ── TODO — Phase 1+ routes (do not implement here) ───────────────────────────
 // Mount thin Hono sub-routers once their controllers exist in api/:
 //
@@ -57,14 +63,12 @@ app.route('/api/scan', scanRouter);
 //   import { watchlistRouter } from './api/watchlist';
 //   import { dealsRouter }     from './api/deals';
 //   import { resolveRouter }   from './api/resolve';
-//   import { telegramRouter }  from './api/telegram';  // POST /api/telegram/test
 //
 //   app.route('/api/config',    configRouter);    // GET / PATCH
 //   app.route('/api/watchlist', watchlistRouter); // GET / POST / PATCH :id / DELETE :id / PATCH :id/reset
 //   app.route('/api/deals',     dealsRouter);     // GET ?status&min_discount&watchlist_id&priority
 //                                                 // PATCH :id / DELETE ?older_than_days
 //   app.route('/api/resolve',   resolveRouter);   // GET /expansions?q= / GET /blueprints?expansion_id&q=
-//   app.route('/api/telegram',  telegramRouter);  // POST /test → calls notifier
 //
 // Rule: route handlers are thin controllers — validate input, delegate to repo.ts /
 // scanner / notifier, return snake_case JSON.  No business logic, no raw SQL here.
