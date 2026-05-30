@@ -123,3 +123,19 @@ export interface Health {
   // Permit additional fields the backend may send
   [key: string]: unknown;
 }
+
+// ---------------------------------------------------------------------------
+// ScanRun — one row of the scan_runs table, returned by GET /api/health
+// or a future scan-runs endpoint
+// ---------------------------------------------------------------------------
+export interface ScanRun {
+  id: number;
+  started_at: string;            // SQLite UTC datetime 'YYYY-MM-DD HH:MM:SS'
+  finished_at: string | null;
+  watch_items_scanned: number;
+  blueprints_scanned: number;
+  api_calls: number;
+  deals_found: number;
+  telegram_sent: number;
+  error: string | null;
+}

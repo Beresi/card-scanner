@@ -1,0 +1,578 @@
+/* ============================================================
+   CARD // BROKER — Extended Primitive Components
+   Segmented control, Switch, Select, Range/Slider, Input/Num,
+   InheritField, and the Clock urgent state.
+
+   All colors via var(--…) tokens or color-mix() derivations.
+   No literal hex values.
+   ============================================================ */
+
+/* ============================================================
+   A. SEGMENTED CONTROL
+   .cb-seg  /  .cb-seg-sm  /  .cb-seg-opt  /  .cb-seg-opt.is-on
+   ============================================================ */
+
+.cb-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.cb-seg-opt {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--line);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 7px 13px;
+  transition: color 0.12s ease, background 0.12s ease;
+  white-space: nowrap;
+}
+
+.cb-seg-opt:last-child {
+  border-right: 0;
+}
+
+.cb-seg-opt:hover {
+  color: var(--text);
+}
+
+/* Active/selected option — accent fill + bottom underline */
+.cb-seg-opt.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Small variant */
+.cb-seg-sm .cb-seg-opt {
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+/* ============================================================
+   B. SWITCH (toggle)
+   .cb-switch  /  .cb-switch.is-on  /  .cb-switch-knob
+   ============================================================ */
+
+.cb-switch {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  cursor: pointer;
+  padding: 0;
+  /* Square shape — no border-radius; --radius: 2px is the identity */
+  border-radius: var(--radius);
+  transition: border-color 0.16s ease, background 0.16s ease;
+  flex: none;
+}
+
+.cb-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-faint);
+  transition: left 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+/* On state */
+.cb-switch.is-on {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+
+.cb-switch.is-on .cb-switch-knob {
+  left: 20px;
+  background: var(--accent);
+  box-shadow: 0 0 calc(8px * var(--glow)) var(--accent-glow);
+}
+
+/* ============================================================
+   C. SELECT
+   .cb-select
+   ============================================================ */
+
+.cb-select {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  padding: 8px 11px;
+  width: 100%;
+  cursor: pointer;
+  border-radius: var(--radius);
+  /* Native select arrow retains OS default; no custom arrow needed */
+  appearance: auto;
+}
+
+.cb-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Narrow variant used in filter bars */
+.cb-select-sm {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* ============================================================
+   D. RANGE / SLIDER
+   .feed-range (the name matches the handoff + components.css usage)
+   ============================================================ */
+
+.feed-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 110px;
+  height: 3px;
+  background: rgba(120, 180, 215, 0.18);
+  cursor: pointer;
+  border-radius: 0;  /* square identity */
+}
+
+/* Diamond-shaped thumb — chamfer-style accent */
+.feed-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  background: var(--accent);
+  box-shadow: 0 0 calc(8px * var(--glow)) var(--accent-glow);
+  cursor: pointer;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+.feed-range::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  background: var(--accent);
+  border: 0;
+  border-radius: 0;
+}
+
+/* ============================================================
+   E. TEXT / NUMBER INPUT
+   .cb-input  /  .cb-num
+   ============================================================ */
+
+.cb-input {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  padding: 8px 11px;
+  width: 100%;
+  border-radius: var(--radius);
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.cb-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Narrow numeric input — fixed width for numeric fields */
+.cb-num {
+  width: 92px;
+}
+
+/* ============================================================
+   F. INHERIT FIELD
+   Container for a labeled control that supports inherit/override states.
+   .cb-ifield  /  .cb-ifield-top  /  .cb-ifield-lbl
+   .cb-inherit  /  .cb-reset  /  .cb-ifield-ctl
+   ============================================================ */
+
+.cb-ifield {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Label row: label text left, inherit indicator / reset button right */
+.cb-ifield-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cb-ifield-lbl {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* "↑ inherited" micro-label */
+.cb-inherit {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* "reset" button (clears override → falls back to inherited default) */
+.cb-reset {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+}
+
+.cb-reset:hover {
+  background: color-mix(in oklab, var(--accent) 24%, transparent);
+}
+
+/* Control wrapper — dimmed when value is inherited (not overridden) */
+.cb-ifield-ctl.is-inherited {
+  opacity: 0.62;
+}
+
+/* ============================================================
+   G. BUTTON SIZE VARIANTS
+   These supplement the base .cb-btn in components.css.
+   .cb-btn-sm  /  .cb-btn-md  /  .cb-btn-lg  /  .cb-btn-ico
+   ============================================================ */
+
+/* The base .cb-btn in components.css defaults to md sizing (8px 14px / 13px).
+   Add named size modifiers so views can be explicit. */
+.cb-btn-sm  { padding: 5px 10px;  font-size: 11.5px; }
+.cb-btn-md  { padding: 8px 14px;  font-size: 13px; }
+.cb-btn-lg  { padding: 11px 20px; font-size: 14px; }
+
+/* Icon-only button — removes horizontal padding imbalance */
+.cb-btn-ico { display: inline-flex; margin: 0 -2px; }
+
+/* Hot variant — filled with --hot for urgent actions */
+.cb-btn-hot {
+  background: var(--hot);
+  color: var(--text);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.cb-btn-hot:hover {
+  background: color-mix(in oklab, var(--hot) 88%, #fff);
+}
+
+/* ============================================================
+   H. CLOCK URGENT STATE
+   .clk-urgent — applied by the leaf Clock component when
+   the next-scan countdown enters the final ~60 s.
+   ============================================================ */
+
+.clk-urgent {
+  color: var(--hot) !important;
+  text-shadow: 0 0 calc(12px * var(--glow)) var(--hot) !important;
+  /* Pulse animation declared in effects.css; applied there under
+     the [data-fx="on"] + prefers-reduced-motion guard. */
+}
+
+/* ============================================================
+   I. LEFT RAIL — nav + brand
+   These styles back the shell's left rail component.
+   .rail-brand, .rail-glyph, .rail-brand-text, .rail-slash,
+   .rail-nav, .rail-item, .rail-item.is-on, .rail-active-bar,
+   .rail-badge, .rail-foot, .rail-sys, .rail-sys-row
+   ============================================================ */
+
+.rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 22px;
+}
+
+.rail-glyph {
+  color: var(--accent);
+  font-size: 20px;
+  text-shadow: 0 0 calc(12px * var(--glow)) var(--accent-glow);
+}
+
+.rail-brand-text {
+  font-family: var(--f-display);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.rail-brand-text b {
+  font-weight: 700;
+}
+
+.rail-slash {
+  color: var(--accent);
+  margin: 0 1px;
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-family: var(--f-display);
+  font-size: 13.5px;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 11px 12px;
+  text-align: left;
+  width: 100%;
+  transition: color 0.14s ease, background 0.14s ease;
+  border-radius: var(--radius);
+}
+
+.rail-item:hover {
+  color: var(--text);
+  background: rgba(120, 180, 215, 0.04);
+}
+
+.rail-item.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Accent left-edge bar on active nav item */
+.rail-active-bar {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 calc(8px * var(--glow)) var(--accent-glow);
+}
+
+/* Badge count chip */
+.rail-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-family: var(--f-mono);
+  color: var(--accent-ink);
+  background: var(--accent);
+  padding: 1px 6px;
+}
+
+.rail-foot {
+  margin-top: auto;
+}
+
+/* System status strip at the rail bottom */
+.rail-sys {
+  border: 1px solid var(--line);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.rail-sys-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rail-sys-row .cb-mono {
+  font-size: 11px;
+}
+
+/* ============================================================
+   J. TOP STRIP (topstrip)
+   Shared shell header for the center stage.
+   .topstrip, .topstrip-title, .topstrip-right,
+   .topstrip-clock, .topstrip-div, .cmdk-chip
+   ============================================================ */
+
+.topstrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--panel) 60%, transparent),
+    transparent
+  );
+  flex: none;
+}
+
+.topstrip-title h1 {
+  font-family: var(--f-display);
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 2px;
+  letter-spacing: 0.01em;
+}
+
+.topstrip-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.topstrip-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.topstrip-clock .cb-mono {
+  font-size: 14px;
+}
+
+/* Thin vertical divider between topstrip slots */
+.topstrip-div {
+  width: 1px;
+  height: 26px;
+  background: var(--line);
+}
+
+/* ⌘K palette trigger chip in the topstrip */
+.cmdk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel-3);
+  border: 1px solid var(--line-strong);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 6px 11px;
+  clip-path: polygon(
+    0 0,
+    calc(100% - 6px) 0,
+    100% 6px,
+    100% 100%,
+    6px 100%,
+    0 calc(100% - 6px)
+  );
+  transition: border-color 0.14s ease, color 0.14s ease;
+}
+
+.cmdk-chip:hover {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
+.cmdk-chip .cb-mono {
+  font-size: 11px;
+}
+
+/* ============================================================
+   K. STAGE INNER — center content wrapper
+   .stage-inner  /  .stage-accent-glow
+   (The structural .cb-stage / .cb-stage-scroll are in base.css)
+   ============================================================ */
+
+/* Center-stage ambient accent radial from top edge */
+.stage-accent-glow {
+  background: radial-gradient(
+    140% 80% at 50% -10%,
+    color-mix(in oklab, var(--accent) 5%, transparent),
+    transparent 60%
+  );
+}
+
+/* Constrained max-width wrapper for stage content */
+.stage-inner {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 24px 30px 70px;
+}
+
+/* ============================================================
+   L. WATCHLIST COMMAND ROW
+   (structural; watchlist.css holds the table classes)
+   .wlist-cmd  /  .wlist-cmd-left  /  .wlist-cmd-right
+   .wlist-search  /  .wlist-sort
+   ============================================================ */
+
+.wlist-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.wlist-cmd-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wlist-cmd-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Inline search bar with embedded .cb-input */
+.wlist-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  padding: 0 11px;
+  background: var(--bg);
+  min-width: 220px;
+}
+
+/* The .cb-input nested inside drops its own border */
+.wlist-search .cb-input {
+  border: 0;
+  padding-left: 0;
+  background: transparent;
+}
+
+.wlist-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wlist-sort .cb-select {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+}

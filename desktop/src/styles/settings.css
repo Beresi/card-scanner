@@ -1,0 +1,175 @@
+/* ============================================================
+   CARD // BROKER — Settings View
+   5-panel settings layout: Scanning, Appearance, Notifications,
+   Tweaks, Danger Zone.
+
+   Classes: .settings, .set-panel, .set-row, .set-row-lbl,
+            .set-row-hint, .set-row-ctl, .set-swatches, .set-swatch,
+            .set-grid, .set-blurb, .set-quiet, .set-tg, .set-cron
+
+   All colors via var(--…) tokens or color-mix() derivations.
+   ============================================================ */
+
+/* ============================================================
+   A. SETTINGS PAGE WRAPPER
+   ============================================================ */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Each settings panel — compose with .cb-panel for the surface */
+.set-panel {
+  /* Layout only; surface/border come from .cb-panel */
+}
+
+/* Optional blurb text at the top of a panel body */
+.set-blurb {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin: 0 0 14px;
+}
+
+/* ============================================================
+   B. SETTINGS ROW
+   A single setting: label+hint on the left, control on the right.
+   .set-row  /  .set-row:last-child (no bottom border)
+   .set-row-lbl  /  .set-row-hint  /  .set-row-ctl
+   ============================================================ */
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.set-row:last-child {
+  border-bottom: 0;
+}
+
+/* Label column: primary label + hint on separate lines */
+.set-row-lbl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.set-row-lbl > span:first-child {
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+/* Hint / description beneath the label */
+.set-row-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+/* Control slot (right side) — flex row for switch + extra controls */
+.set-row-ctl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+/* ============================================================
+   C. TWO-COLUMN SETTINGS GRID
+   .set-grid — 2-col layout for denser sections (e.g. tweaks)
+   ============================================================ */
+
+.set-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 32px;
+}
+
+/* ============================================================
+   D. ACCENT SWATCH PICKER
+   .set-swatches  /  .set-swatch[--sw]  /  .set-swatch.is-on
+   Each swatch has a --sw custom property set inline for its color.
+   ============================================================ */
+
+.set-swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Individual swatch — chamfer-shaped color chip */
+.set-swatch {
+  width: 26px;
+  height: 26px;
+  background: var(--sw);   /* set via inline style: style="--sw: #22d3ee" */
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+  /* Smaller chamfer: 6px cut — distinct from the main 12px */
+  clip-path: polygon(
+    0 0,
+    calc(100% - 6px) 0,
+    100% 6px,
+    100% 100%,
+    6px 100%,
+    0 calc(100% - 6px)
+  );
+  transition: transform 0.12s ease;
+}
+
+.set-swatch:hover {
+  transform: scale(1.12);
+}
+
+/* Active swatch — white outline ring */
+.set-swatch.is-on {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   E. TELEGRAM SETTINGS BLOCK
+   .set-tg — horizontal row used in the notifications panel
+   ============================================================ */
+
+.set-tg {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   F. QUIET HOURS ROW
+   .set-quiet  /  .set-quiet-tz
+   ============================================================ */
+
+.set-quiet {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.set-quiet-tz {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* ============================================================
+   G. CRON EXPRESSION DISPLAY
+   .set-cron — shows the hourly cron in the Scanning panel
+   ============================================================ */
+
+.set-cron {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}

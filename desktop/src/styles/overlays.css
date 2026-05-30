@@ -1,0 +1,623 @@
+/* ============================================================
+   CARD // BROKER — Overlays
+   Shared modal base, command palette, scan overlay, add-card
+   flow, and toast notifications.
+
+   Z-INDEX SCALE (defined here; applied consistently below):
+     --z-backdrop:    0    (grid + vignette, in base.css)
+     --z-shell:       1    (3-column shell, in base.css)
+     --z-toasts:      60   (.toasts)
+     --z-palette:     70   (.cmdk-overlay, .addflow-overlay)
+     --z-scan:        80   (.scan-overlay)
+     --z-boot:       100   (.boot, in boot.css)
+     --z-modal:       70   (.cb-modal-overlay — same tier as palette)
+
+   All colors via var(--…) tokens or color-mix() derivations.
+   ============================================================ */
+
+/* Register z-index scale as custom properties for reference */
+:root {
+  --z-backdrop: 0;
+  --z-shell:    1;
+  --z-toasts:   60;
+  --z-palette:  70;
+  --z-scan:     80;
+  --z-boot:    100;
+}
+
+/* ============================================================
+   A. SHARED MODAL OVERLAY BASE
+   .cb-modal-overlay — full-screen backdrop (composable)
+   .cb-modal — the dialog panel (composable with .cb-panel .cb-chamfer)
+   ============================================================ */
+
+.cb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-palette);   /* same tier as command palette */
+  background: rgba(2, 4, 8, 0.74);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 9vh;
+}
+
+.cb-modal {
+  width: 540px;
+  max-width: 92vw;
+  background: var(--panel-2);
+  outline: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  outline-offset: -1px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.60),
+    0 0 calc(40px * var(--glow)) color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+/* ============================================================
+   B. COMMAND PALETTE (⌘K)
+   .cmdk-overlay  /  .cmdk  /  .cmdk-input-wrap  /  .cmdk-input
+   .cmdk-esc  /  .cmdk-list  /  .cmdk-group  /  .cmdk-group-label
+   .cmdk-item  /  .cmdk-item.is-active  /  .cmdk-item-label
+   .cmdk-item-hint  /  .cmdk-enter  /  .cmdk-foot  /  .cmdk-none
+   ============================================================ */
+
+.cmdk-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-palette);
+  background: rgba(2, 4, 8, 0.70);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.cmdk {
+  width: 620px;
+  max-width: 92vw;
+  background: var(--panel-2);
+  outline: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  outline-offset: -1px;
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.60),
+    0 0 calc(50px * var(--glow)) color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+/* Input row at the top of the palette */
+.cmdk-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.cmdk-input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-family: var(--f-display);
+  font-size: 16px;
+}
+
+.cmdk-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Esc key hint chip */
+.cmdk-esc {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+}
+
+/* Scrollable results list */
+.cmdk-list {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* Empty state */
+.cmdk-none {
+  padding: 26px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Result group */
+.cmdk-group {
+  margin-bottom: 6px;
+}
+
+.cmdk-group-label {
+  padding: 8px 10px 4px;
+  /* Compose with .cb-eyebrow for the micro-label style */
+}
+
+/* Individual command item */
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  padding: 9px 11px;
+  text-align: left;
+  transition: background 0.1s ease;
+  border-radius: var(--radius);
+}
+
+.cmdk-item.is-active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.cmdk-item-label {
+  font-family: var(--f-display);
+  font-size: 13.5px;
+  font-weight: 500;
+  flex: none;
+}
+
+.cmdk-item-hint {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  margin-left: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Enter icon / hint (right-aligned) */
+.cmdk-enter {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 13px;
+  flex: none;
+}
+
+/* Footer legend row */
+.cmdk-foot {
+  display: flex;
+  gap: 18px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* ============================================================
+   C. SCAN OVERLAY
+   .scan-overlay  /  .scan-box  /  .scan-radar
+   .scan-feed  /  .scan-lines  /  .scan-line  /  .scan-line-mark
+   .scan-progress  /  .scan-progress-fill
+   ============================================================ */
+
+.scan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-scan);
+  background: rgba(2, 4, 8, 0.82);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 2-column dialog: radar (220 px) | feed log */
+.scan-box {
+  width: 720px;
+  max-width: 92vw;
+  background: var(--panel-2);
+  outline: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  outline-offset: -1px;
+  padding: 26px;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 26px;
+  box-shadow: 0 0 calc(60px * var(--glow)) color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+/* ---- Full-size scan radar (220 × 220) ---- */
+.scan-radar {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  align-self: center;
+  flex: none;
+}
+
+/* Concentric rings */
+.radar-rings {
+  position: absolute;
+  inset: 0;
+}
+
+.radar-ring {
+  position: absolute;
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  border-radius: 50%;
+}
+
+.radar-ring:nth-child(1) { inset: 0; }
+.radar-ring:nth-child(2) { inset: 33px; }
+.radar-ring:nth-child(3) { inset: 66px; }
+
+/* Crosshair */
+.radar-cross-h {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.radar-cross-v {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+/* Sweep cone — rotation in effects.css */
+.radar-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in oklab, var(--accent) 32%, transparent) 40deg,
+    transparent 60deg
+  );
+  /* Static fallback: rings visible without rotation */
+}
+
+/* Contact ping dot */
+.radar-ping {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: var(--good);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 calc(14px * var(--glow)) var(--good);
+}
+
+/* Center readout */
+.radar-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--f-mono);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--accent);
+  text-shadow: 0 0 calc(16px * var(--glow)) var(--accent-glow);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Scan log feed (right column) ---- */
+.scan-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.scan-feed-head {
+  /* Compose with .cb-panel-head or .cb-eyebrow */
+}
+
+.scan-lines {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.scan-line {
+  display: flex;
+  gap: 9px;
+  color: var(--text-dim);
+}
+
+.scan-line-mark {
+  color: var(--good);
+  flex: none;
+}
+
+/* Currently-executing line */
+.scan-line.is-cur {
+  color: var(--accent);
+}
+
+.scan-line.is-cur .scan-line-mark {
+  color: var(--accent);
+}
+
+/* Progress bar at the bottom of the scan dialog */
+.scan-progress {
+  height: 3px;
+  background: rgba(120, 180, 215, 0.15);
+}
+
+.scan-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 calc(8px * var(--glow)) var(--accent-glow);
+  transition: width 0.3s ease;
+}
+
+/* ============================================================
+   D. ADD-CARD FLOW (modal)
+   .addflow-overlay  /  .addflow  /  .addflow-head
+   .addflow-close  /  .addflow-body  /  .addflow-step
+   .addflow-back  /  .addflow-search  /  .addflow-results
+   .addflow-opt  /  .addflow-opt-name  /  .addflow-opt-add
+   .addflow-none  /  .addflow-hint
+   ============================================================ */
+
+.addflow-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-palette);
+  background: rgba(2, 4, 7, 0.78);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 9vh;
+}
+
+.addflow {
+  width: 540px;
+  max-width: 92vw;
+  background: var(--panel-2);
+  outline: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  outline-offset: -1px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.60),
+    0 0 calc(40px * var(--glow)) color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+.addflow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Close button (×) */
+.addflow-close {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.addflow-close:hover {
+  color: var(--hot);
+  border-color: color-mix(in oklab, var(--hot) 40%, transparent);
+}
+
+.addflow-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Step header row: back button + step indicator */
+.addflow-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Back chevron button */
+.addflow-back {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.addflow-back:hover {
+  text-decoration: underline;
+}
+
+/* Search bar (same pattern as wlist-search) */
+.addflow-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line-strong);
+  padding: 0 11px;
+  background: var(--bg);
+}
+
+.addflow-search .cb-input {
+  border: 0;
+  padding-left: 0;
+  background: transparent;
+}
+
+/* Results list */
+.addflow-results {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Individual result option */
+.addflow-opt {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.12s ease, background 0.12s ease;
+  text-align: left;
+  border-radius: var(--radius);
+}
+
+.addflow-opt:hover {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+
+.addflow-opt-name {
+  font-family: var(--f-display);
+  font-size: 14px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Add" label/button inside the opt row */
+.addflow-opt-add {
+  margin-left: auto;
+  flex: none;
+}
+
+/* Empty results state */
+.addflow-none {
+  padding: 18px 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Contextual hint beneath the search */
+.addflow-hint {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+/* ============================================================
+   E. TOAST NOTIFICATIONS
+   .toasts — fixed container (top-right, z:60)
+   .toast  /  .toast-hot  /  .toast-rail
+   .toast-body  /  .toast-head  /  .toast-title  /  .toast-sub
+
+   Animation (toastIn slide) is in effects.css under the guard.
+   The .toast class references the keyframe; effects.css defines it.
+   ============================================================ */
+
+.toasts {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: var(--z-toasts);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  width: 300px;
+  background: var(--panel-2);
+  outline: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  outline-offset: -1px;
+  display: flex;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.50),
+    0 0 calc(26px * var(--glow)) color-mix(in oklab, var(--hot) 14%, transparent);
+  pointer-events: auto;
+  /* Animation class cb-toast-enter defined in effects.css */
+}
+
+/* Priority toast variant — hot-tinted outline */
+.toast-hot {
+  outline-color: color-mix(in oklab, var(--hot) 50%, transparent);
+}
+
+/* Left rail — color accent bar */
+.toast-rail {
+  width: 3px;
+  background: var(--hot);
+  box-shadow: 0 0 calc(10px * var(--glow)) var(--hot);
+  flex: none;
+}
+
+.toast-body {
+  padding: 11px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.toast-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--hot);
+}
+
+/* Eyebrow label inside the toast head — override to hot color */
+.toast-head .cb-eyebrow {
+  color: var(--hot);
+}
+
+.toast-title {
+  font-family: var(--f-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toast-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+}

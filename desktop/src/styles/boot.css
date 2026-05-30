@@ -1,0 +1,184 @@
+/* ============================================================
+   CARD // BROKER — Boot Sequence
+   CRT terminal reveal → logo → glitch-collapse exit animation.
+
+   z-index: var(--z-boot) = 100 (defined in overlays.css).
+
+   The boot screen appears on first load (gated by localStorage).
+   Clicking/pressing skip dismisses it immediately.
+   The exit animation (.boot-out) uses filter + clip-path which
+   is intentional for the CRT collapse effect; it is NOT applied
+   during normal UI — only during the 620ms exit transition on
+   the full-screen overlay.
+
+   Animation keyframes (bootOff, logoIn, sweep, pulse) are in
+   effects.css and applied under the [data-fx] + reduced-motion guard.
+
+   All colors via var(--…) tokens or color-mix() derivations.
+   ============================================================ */
+
+/* ============================================================
+   A. BOOT SCREEN SHELL
+   ============================================================ */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-boot);
+  /* Radial gradient — deep cold dark, not a raw hex: approximated
+     using known token surfaces. The two stops are the darkest
+     possible values consistent with --bg (#05070b) and its
+     slightly warmer deep sibling. */
+  background: radial-gradient(
+    120% 90% at 50% 40%,
+    var(--rail),       /* #070a10 — slightly lighter center */
+    var(--bg) 80%      /* #05070b — near-black edge */
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* ---- Exit state: CRT glitch-collapse (animation in effects.css) ---- */
+.boot-out {
+  /* Animation cb-boot-off applied via effects.css under the guard.
+     Without effects, .boot-out simply becomes invisible (opacity 0). */
+  pointer-events: none;
+  opacity: 0;   /* static fallback — immediate hide */
+}
+
+/* ============================================================
+   B. BOOT SCAN LINE (moving highlight band)
+   Slow vertical sweep across the terminal content.
+   Animation cb-sweep applied in effects.css.
+   ============================================================ */
+
+.boot-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in oklab, var(--accent) 8%, transparent),
+    transparent
+  );
+  /* Static fallback: invisible (no opacity specified — starts at 0 via animation) */
+}
+
+/* ============================================================
+   C. TERMINAL CONTENT INNER
+   .boot-inner — constrained-width column
+   .boot-term  — monospace terminal block
+   .boot-line  — one text line
+   .boot-head  — accent-colored header line
+   .boot-ok    — success prefix (">>" or "OK")
+   .boot-cursor — blinking cursor character
+   ============================================================ */
+
+.boot-inner {
+  position: relative;
+  width: 620px;
+  max-width: 90vw;
+  min-height: 320px;
+}
+
+.boot-term {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--text-dim);
+}
+
+.boot-line {
+  white-space: pre-wrap;
+}
+
+/* Accent-colored header line at the top of the terminal output */
+.boot-head {
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+
+/* OK / success lines */
+.boot-ok {
+  color: var(--good);
+}
+
+/* Blinking cursor — animation (pulse) applied in effects.css */
+.boot-cursor {
+  color: var(--accent);
+}
+
+/* ============================================================
+   D. LOGO REVEAL
+   Fades in on top of the terminal after lines have streamed.
+   Animation cb-logo-in applied in effects.css.
+   ============================================================ */
+
+.boot-logo {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  /* Static fallback: immediately visible */
+}
+
+/* Large glyph above the wordmark */
+.boot-logo-mark {
+  font-size: 56px;
+  color: var(--accent);
+  text-shadow: 0 0 calc(30px * var(--glow)) var(--accent-glow);
+  /* Pulse animation in effects.css */
+}
+
+/* Wordmark: "CARD // BROKER" */
+.boot-logo-text {
+  font-family: var(--f-display);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+/* Accent-colored "/" separators in the wordmark */
+.boot-logo-slash {
+  color: var(--accent);
+}
+
+/* The two wordmark halves — no additional styling needed */
+.boot-logo-1  {}
+.boot-logo-2  {}
+
+/* Tagline beneath the wordmark */
+.boot-logo-sub {
+  letter-spacing: 0.3em;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   E. SKIP HINT
+   Centered at the bottom of the boot screen.
+   ============================================================ */
+
+.boot-skip {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  letter-spacing: 0.08em;
+}

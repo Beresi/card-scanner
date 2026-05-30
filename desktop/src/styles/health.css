@@ -1,0 +1,185 @@
+/* ============================================================
+   CARD // BROKER — Health View
+   Status banner, stat tiles, and scan-run history log.
+
+   Classes: .health, .health-banner, .health-banner-in,
+            .health-state, .health-state-big, .health-next,
+            .health-next-clock, .health-stats, .health-tile,
+            .health-tile-v, .health-tile-{good,accent,warn},
+            .hlog, .hlog-h, .hlog-row, .hlog-err, .hlog-detail
+
+   All colors via var(--…) tokens or color-mix() derivations.
+   ============================================================ */
+
+/* ============================================================
+   A. PAGE WRAPPER
+   ============================================================ */
+
+.health {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ============================================================
+   B. STATUS BANNER
+   .health-banner — compose with .cb-panel
+   .health-banner-in — inner flex row
+   .health-state — left cluster (dot + big status text)
+   .health-state-big — the "HEALTHY" / "ERROR" headline
+   .health-next — right cluster (countdown clock)
+   .health-next-clock — the large clock figure
+   ============================================================ */
+
+.health-banner {
+  /* Surface from .cb-panel; this adds no extra background */
+}
+
+.health-banner-in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.health-state {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Large status headline — color determined by the state class on the parent */
+.health-state-big {
+  font-family: var(--f-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--good);   /* default: healthy */
+}
+
+/* Override variants */
+.health-state-big.is-warn  { color: var(--warn); }
+.health-state-big.is-error { color: var(--hot); }
+
+/* Next-scan cluster (right side of the banner) */
+.health-next {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+/* Large countdown clock */
+.health-next-clock {
+  font-family: var(--f-mono);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 calc(16px * var(--glow)) var(--accent-glow);
+  line-height: 1;
+}
+
+/* ============================================================
+   C. STAT TILES GRID
+   .health-stats — 3-column grid
+   .health-tile — individual tile (compose with .cb-panel)
+   .health-tile-v — the large numeric value
+   Tone modifiers: .health-tile-good / .health-tile-accent / .health-tile-warn
+   ============================================================ */
+
+.health-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.health-tile {
+  background: var(--panel);
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Large value in a tile */
+.health-tile-v {
+  font-family: var(--f-mono);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);   /* default; overridden by tone class */
+}
+
+.health-tile-good .health-tile-v   { color: var(--good); }
+.health-tile-accent .health-tile-v { color: var(--accent); }
+.health-tile-warn .health-tile-v   { color: var(--warn); }
+
+/* ============================================================
+   D. SCAN-RUN HISTORY LOG
+   .hlog — outer wrapper
+   .hlog-h — header row
+   .hlog-row — data row
+   .hlog-err — error row highlight
+   .hlog-detail — expanded detail row beneath an error
+   ============================================================ */
+
+.hlog {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 9-column grid: time | worker | scanned | new | sent | ok | error | duration | status */
+.hlog-h,
+.hlog-row {
+  display: grid;
+  grid-template-columns: 56px 1.4fr 52px 56px 1fr 48px 60px 48px 70px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 8px;
+  font-size: 11.5px;
+}
+
+.hlog-h {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.hlog-row {
+  border-bottom: 1px solid var(--line);
+  color: var(--text-dim);
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.hlog-row:hover {
+  background: rgba(120, 180, 215, 0.03);
+  color: var(--text);
+}
+
+/* Error row — warm tint to signal a failed run */
+.hlog-err {
+  background: color-mix(in oklab, var(--warn) 5%, transparent);
+}
+
+/* Expanded detail row: shown beneath an error row on click */
+.hlog-detail {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 8px 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+  font-family: var(--f-mono);
+}

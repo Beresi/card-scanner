@@ -1,0 +1,346 @@
+/* ============================================================
+   CARD // BROKER — Effects & Keyframes
+   All motion in the app is defined here and nowhere else.
+
+   ┌─────────────────────────────────────────────────────────┐
+   │  EFFECTS FLAG CONVENTION (Wave-3 EffectsContext)         │
+   │                                                           │
+   │  Motion is enabled when ALL of:                          │
+   │    1. body[data-fx="on"]  (default; set by EffectsCtx)  │
+   │    2. prefers-reduced-motion: no-preference              │
+   │                                                           │
+   │  body[data-fx="off"] disables ALL motion globally.       │
+   │  EffectsContext sets: document.body.dataset.fx = "on"    │
+   │  (or "off") based on the config.effects_enabled flag.    │
+   │  Default body.dataset.fx before EffectsCtx loads = ""    │
+   │  (no attribute) — treat as "on" for initial render.      │
+   │                                                           │
+   │  Selector pattern throughout this file:                  │
+   │    @media (prefers-reduced-motion: no-preference) {      │
+   │      body:not([data-fx="off"]) .the-class { ... }        │
+   │    }                                                      │
+   │                                                           │
+   │  Static fallbacks (outside the guard) ensure all UI is   │
+   │  visible and usable when motion is disabled.             │
+   └─────────────────────────────────────────────────────────┘
+
+   Principles (README + animation skill):
+   - transform / opacity ONLY — no layout-affecting props.
+   - Event-driven: mount / hover / scan — never always-on loops.
+   - Each effect behind data-fx gate + prefers-reduced-motion.
+   - Per-effect Tweak toggle can add a more specific data-* attr
+     (e.g. data-fx-blips="off") — the convention is extensible.
+   ============================================================ */
+
+/* ============================================================
+   A. KEYFRAME DEFINITIONS
+   Defined once; referenced by class rules below.
+   ============================================================ */
+
+/* ---- Card/deal entrance (mount) ---- */
+@keyframes cb-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---- Toast slide in from right ---- */
+@keyframes cb-toast-in {
+  from { transform: translateX(120%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ---- Generic fade-up ---- */
+@keyframes cb-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---- Radar / scan overlay: continuous rotation ---- */
+@keyframes cb-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Radar contact blip: scale + fade ---- */
+@keyframes cb-blip {
+  0%,  70% { transform: translate(-50%, -50%) scale(0);   opacity: 0; }
+  78%       { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+  100%      { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+}
+
+/* ---- Ping pop (contact appearance in scan overlay) ---- */
+@keyframes cb-ping-in {
+  from { transform: translate(-50%, -50%) scale(0); }
+  to   { transform: translate(-50%, -50%) scale(1); }
+}
+
+/* ---- Hot-clock pulse ---- */
+@keyframes cb-hot-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* ---- Generic low-key pulse (blinking cursor, dot-live) ---- */
+@keyframes cb-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+/* ---- Card hover lift (subtle Y + glow, transform only) ---- */
+@keyframes cb-card-hover {
+  from { transform: none; }
+  to   { transform: translateY(-2px); }
+}
+
+/* ---- Decrypt cursor / scramble marker ---- */
+@keyframes cb-decrypt-cursor {
+  0%, 100% { opacity: 1; }
+  49%       { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ---- Boot: terminal lines flicker in ---- */
+@keyframes cb-flicker-in {
+  0%   { opacity: 0; }
+  10%  { opacity: 0.6; }
+  20%  { opacity: 0.1; }
+  40%  { opacity: 0.9; }
+  100% { opacity: 1; }
+}
+
+/* ---- Boot: logo reveal ---- */
+@keyframes cb-logo-in {
+  0%   { opacity: 0;    filter: blur(8px) brightness(2.4); transform: scale(1.08); }
+  22%  { opacity: 0.35; }
+  38%  { opacity: 0.85; filter: blur(1px) brightness(1.4); }
+  52%  { opacity: 0.4; }
+  100% { opacity: 1;    filter: blur(0)   brightness(1);   transform: scale(1); }
+}
+
+/* ---- Boot: scan line sweep ---- */
+@keyframes cb-sweep {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(900%); }
+}
+
+/* ---- Boot: CRT glitch-collapse (exit) ---- */
+@keyframes cb-boot-off {
+  0%   { opacity: 1; transform: translateX(0)   scaleX(1);    filter: brightness(1);                                          clip-path: inset(0 0 0 0); }
+  16%  {             transform: translateX(-7px);              filter: brightness(1.5) hue-rotate(-22deg) saturate(2); }
+  30%  {             transform: translateX(7px);               filter: brightness(1.5) hue-rotate(22deg)  saturate(2); }
+  44%  {             transform: translateX(0)   scaleX(1);    filter: brightness(2.2);                                          clip-path: inset(0 0 0 0); }
+  64%  {             transform: scaleX(1.04);                  filter: brightness(3.4);               opacity: 1;               clip-path: inset(48% 0 48% 0); }
+  100% { opacity: 0; transform: scaleX(1.3);                   filter: brightness(5);                                           clip-path: inset(50% 0 50% 0); }
+}
+
+/* ---- Panel glow pulse (new deal card highlight) ---- */
+@keyframes cb-glow-pulse {
+  0%,  100% { box-shadow: 0 0 0 1px var(--line); }
+  50%        { box-shadow: 0 0 calc(14px * var(--glow)) var(--accent-glow), 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent); }
+}
+
+/* ============================================================
+   B. DEAL / CARD ENTRANCE
+   .cb-deal-enter — applied on mount; removed after animation ends.
+   Static fallback: opacity 1 (no transition).
+   ============================================================ */
+
+/* Static: visible by default */
+.cb-deal-enter {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .cb-deal-enter {
+    animation: cb-rise 320ms ease-out both;
+  }
+}
+
+/* Stagger delay — set via inline style: style="--stagger: 2"
+   The JS side multiplies index by 140ms and sets this var. */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .cb-deal-enter {
+    animation-delay: calc(var(--stagger, 0) * 140ms);
+  }
+}
+
+/* ============================================================
+   C. CARD HOVER LIFT
+   Static fallback: outline change only (already in components.css).
+   ============================================================ */
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .deal:hover {
+    animation: cb-card-hover 160ms ease-out forwards;
+  }
+}
+
+/* ============================================================
+   D. TOAST SLIDE-IN
+   .cb-toast-enter — applied on mount by Toast component.
+   Static fallback: toast appears at full opacity (no slide).
+   ============================================================ */
+
+/* Static: immediately visible */
+.cb-toast-enter {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .cb-toast-enter {
+    animation: cb-toast-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+}
+
+/* ============================================================
+   E. RADAR SWEEP ROTATION
+   Applied to .radar-sweep and .mradar-sweep.
+   Static fallback: rings visible without rotation.
+
+   .mradar.is-live speeds the sweep up for active scans.
+   ============================================================ */
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .radar-sweep {
+    animation: cb-spin 1.6s linear infinite;
+  }
+
+  body:not([data-fx="off"]) .mradar-sweep {
+    animation: cb-spin 3.4s linear infinite;
+  }
+
+  /* Faster while scanning */
+  body:not([data-fx="off"]) .mradar.is-live .mradar-sweep {
+    animation-duration: 1.1s;
+  }
+}
+
+/* ============================================================
+   F. RADAR BLIPS (ambient telemetry contact dots)
+   Static fallback: dots hidden (scale:0 from base .mradar-blip).
+   ============================================================ */
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .mradar-blip {
+    animation: cb-blip 3.8s ease-in-out infinite;
+  }
+}
+
+/* ============================================================
+   G. RADAR PING (new contact pop in scan overlay)
+   Static fallback: dot at full scale.
+   ============================================================ */
+
+/* Static: full scale */
+.radar-ping {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .radar-ping {
+    animation: cb-ping-in 0.5s ease both;
+  }
+}
+
+/* ============================================================
+   H. HOT CLOCK PULSE (.clk-urgent)
+   Static fallback: hot color + glow, no pulse (in primitives-ext.css).
+   ============================================================ */
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .clk-urgent {
+    animation: cb-hot-pulse 1s ease infinite;
+  }
+}
+
+/* ============================================================
+   I. BLINKING CURSOR (boot terminal + decrypt)
+   .cb-cursor-blink — generic blinking cursor character
+   ============================================================ */
+
+/* Static: always visible */
+.cb-cursor-blink {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .cb-cursor-blink {
+    animation: cb-pulse 0.9s steps(2, end) infinite;
+  }
+}
+
+/* Boot-screen cursor alias */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .boot-cursor {
+    animation: cb-pulse 0.9s steps(2, end) infinite;
+  }
+}
+
+/* ============================================================
+   J. BOOT SEQUENCE ANIMATIONS
+   ============================================================ */
+
+/* Scan band sweep */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .boot-scan {
+    animation: cb-sweep 3.2s linear infinite;
+  }
+}
+
+/* Logo mark ambient pulse */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .boot-logo-mark {
+    animation: cb-pulse 2s ease infinite;
+  }
+}
+
+/* Logo fade-in */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .boot-logo {
+    animation: cb-logo-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+}
+
+/* Boot terminal line flicker */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .boot-line-in {
+    animation: cb-flicker-in 0.45s ease both;
+  }
+}
+
+/* CRT glitch-collapse exit */
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .boot-out {
+    animation: cb-boot-off 0.62s cubic-bezier(0.6, 0, 0.32, 1) forwards;
+    /* Override the static opacity:0 fallback from boot.css */
+    opacity: 1;
+  }
+}
+
+/* ============================================================
+   K. DEAL GLOW PULSE (new deal highlight — fires on scan complete)
+   .cb-deal-ping — 2-cycle glow pulse on the card outline
+   ============================================================ */
+
+/* Static: no extra effect */
+.cb-deal-ping {}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .cb-deal-ping {
+    animation: cb-glow-pulse 1.1s ease 2;
+  }
+}
+
+/* ============================================================
+   L. GENERIC FADE-UP ENTRANCE
+   .cb-fade-up — used by overlays, modals, health panels
+   ============================================================ */
+
+.cb-fade-up {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-fx="off"]) .cb-fade-up {
+    animation: cb-fade-up 280ms ease-out both;
+  }
+}

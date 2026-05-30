@@ -1,0 +1,287 @@
+/* ============================================================
+   CARD // BROKER — Right-Rail Telemetry
+   Telemetry section groups, mini radar, stat tiles, distribution
+   bars, and activity log.
+
+   Classes: .tele, .tele-sec, .tele-scan, .tele-scan-info,
+            .tele-clock, .mradar (+ rings / cross / sweep / blip),
+            .tstat-grid, .tstat, .tstat-v, .tstat-{accent,good,hot},
+            .tdist, .tdist-row, .tdist-k, .tdist-bar, .tdist-fill,
+            .tdist-n, .tlog, .tlog-row, .tlog-name, .tlog-disc, .tlog-age
+
+   Animation keyframes (mradar sweep) live in effects.css.
+   All colors via var(--…) tokens or color-mix() derivations.
+   ============================================================ */
+
+/* ============================================================
+   A. TELEMETRY WRAPPER
+   .tele — outer rail container
+   .tele-sec — visual section separator
+   ============================================================ */
+
+.tele {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Section divider: hairline + top padding */
+.tele-sec {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
+}
+
+/* ============================================================
+   B. SCAN STATUS ROW
+   .tele-scan — panel + mini radar side by side
+   .tele-scan-info — text column (label + countdown)
+   .tele-clock — large countdown number
+   ============================================================ */
+
+.tele-scan {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  padding: 14px;
+  background: var(--panel);
+}
+
+.tele-scan-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* Large countdown display in the telemetry scan block */
+.tele-clock {
+  font-family: var(--f-mono);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 calc(12px * var(--glow)) var(--accent-glow);
+}
+
+/* ============================================================
+   C. MINI RADAR
+   .mradar — 62 × 62 square container
+   .mradar-ring (×2) — concentric border circles
+   .mradar-cross-h / .mradar-cross-v — crosshair hairlines
+   .mradar-sweep — rotating conic-gradient cone
+   .mradar-blip — ambient contact dots (animated in effects.css)
+   .mradar.is-live — faster sweep when a scan is in progress
+   ============================================================ */
+
+.mradar {
+  position: relative;
+  width: 62px;
+  height: 62px;
+  flex: none;
+}
+
+.mradar-ring {
+  position: absolute;
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  border-radius: 50%;
+}
+
+.mradar-ring:nth-child(1) { inset: 0; }
+.mradar-ring:nth-child(2) { inset: 18px; }
+
+/* Crosshair */
+.mradar-cross-h {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.mradar-cross-v {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+/* Sweep cone — rotation keyframe in effects.css */
+.mradar-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in oklab, var(--accent) 34%, transparent) 46deg,
+    transparent 64deg
+  );
+  /* Static fallback: no animation (effects.css adds rotation under the guard) */
+}
+
+/* Faster sweep animation when live scan is running */
+.mradar.is-live .mradar-sweep {
+  /* effects.css overrides animation-duration via the .is-live modifier */
+}
+
+/* Blip dot — animation in effects.css */
+.mradar-blip {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  transform: translate(-50%, -50%) scale(0);
+  box-shadow: 0 0 calc(9px * var(--glow)) var(--good);
+  /* Static: hidden until effects.css animates them */
+}
+
+/* ============================================================
+   D. STAT TILE GRID
+   .tstat-grid — 2-column grid
+   .tstat — individual tile
+   .tstat-v — the large numeric value
+   Tone variants: .tstat-accent / .tstat-good / .tstat-hot
+   ============================================================ */
+
+.tstat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tstat {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tstat-v {
+  font-family: var(--f-mono);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tstat-accent .tstat-v { color: var(--accent); }
+.tstat-good   .tstat-v { color: var(--good); }
+.tstat-hot    .tstat-v { color: var(--hot); }
+
+/* ============================================================
+   E. DISTRIBUTION BARS
+   Horizontal mini bar chart for discount distribution breakdown.
+   .tdist — outer wrapper
+   .tdist-row — one row: key | bar | count
+   .tdist-k — key label
+   .tdist-bar — bar track
+   .tdist-fill — filled portion (width via inline style)
+   .tdist-n — numeric count
+   ============================================================ */
+
+.tdist {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.tdist-row {
+  display: grid;
+  grid-template-columns: 46px 1fr 24px;
+  align-items: center;
+  gap: 8px;
+}
+
+.tdist-k {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.tdist-bar {
+  height: 8px;
+  background: rgba(120, 180, 215, 0.10);
+  position: relative;
+}
+
+.tdist-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  box-shadow: 0 0 calc(7px * var(--glow)) var(--accent-glow);
+  min-width: 2px;
+  /* Width driven by inline style; transition is not layout-affecting
+     because it changes the CSS property directly, but follows the
+     transform/opacity-only principle — kept short and non-distracting. */
+  transition: width 0.3s ease;
+}
+
+.tdist-n {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   F. ACTIVITY LOG (recent deals ticker)
+   .tlog — outer wrapper
+   .tlog-row — one entry: dot | name | discount | age
+   .tlog-name — card name (truncates)
+   .tlog-disc — discount percentage
+   .tlog-age — relative age ("2 m")
+   ============================================================ */
+
+.tlog {
+  display: flex;
+  flex-direction: column;
+}
+
+.tlog-row {
+  display: grid;
+  grid-template-columns: 9px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tlog-row:last-child {
+  border-bottom: 0;
+}
+
+.tlog-name {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tlog-disc {
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  /* Color applied by parent tone class (cb-text-good etc.) */
+}
+
+.tlog-age {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
