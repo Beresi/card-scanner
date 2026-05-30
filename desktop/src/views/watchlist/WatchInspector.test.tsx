@@ -40,6 +40,8 @@ vi.mock('../../api/client', () => ({
   resetWatchField: vi.fn(),
   createWatchItem: vi.fn(),
   runScanNow:      vi.fn(),
+  getResolveExpansions: vi.fn().mockResolvedValue([]),
+  getResolveBlueprints: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({

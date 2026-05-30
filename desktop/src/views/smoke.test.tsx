@@ -37,6 +37,8 @@ vi.mock('../api/client', () => ({
   createWatchItem: vi.fn(),
   deleteWatchItem: vi.fn(),
   runScanNow:   vi.fn(),
+  getResolveExpansions: vi.fn().mockResolvedValue([]),
+  getResolveBlueprints: vi.fn().mockResolvedValue([]),
   ApiError: class ApiError extends Error {
     status: number;
     code: string;

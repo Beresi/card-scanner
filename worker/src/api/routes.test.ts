@@ -26,12 +26,33 @@ import { Hono } from 'hono';
 import { configRouter } from './config';
 import { watchlistRouter } from './watchlist';
 import { dealsRouter } from './deals';
-import { resolveRouter } from './resolve';
+import { createResolveRouter } from './resolve';
 import { scanRouter } from './scan';
 import { getLatestScanRun } from '../db/repo';
 import { makeD1, seedDeal, seedWatchlist, seedScanRun } from './__test-helpers__/d1';
 import type { Env } from '../index';
 import type { ConfigRow, WatchlistRow, DealRow, ScanRunRow } from '../db/types';
+import type { CardTraderClient } from '../cardtrader/client';
+import type { Expansion, Blueprint } from '../cardtrader/types';
+
+// ---------------------------------------------------------------------------
+// Mock CardTrader client for routes.test.ts
+//
+// Returns empty arrays for all resolve-related calls.  This lets the existing
+// resolve cache-read tests continue to exercise the DB path while the new
+// fetch+cache behaviour is fully covered in resolve.test.ts.
+// ---------------------------------------------------------------------------
+
+const emptyClient: CardTraderClient = {
+  info: () => Promise.reject(new Error('not used in route tests')),
+  marketplaceProducts: () => Promise.reject(new Error('not used in route tests')),
+  expansions: (): Promise<Expansion[]> => Promise.resolve([]),
+  blueprintsExport: (): Promise<Blueprint[]> => Promise.resolve([]),
+};
+
+const resolveRouter = createResolveRouter({
+  createClient: () => emptyClient,
+});
 
 // ---------------------------------------------------------------------------
 // Test app — mirrors the auth gate + route mounting from index.ts

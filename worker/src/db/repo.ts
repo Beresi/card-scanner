@@ -729,6 +729,134 @@ export async function pruneDeals(
 }
 
 // ---------------------------------------------------------------------------
+// Cache sync helpers (Phase 4 — /api/resolve fetch+cache)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert a batch of expansion rows from the CardTrader /expansions feed.
+ *
+ * Uses `INSERT … ON CONFLICT(id) DO UPDATE SET …, synced_at=datetime('now')` so
+ * re-syncing is idempotent.  All statements are sent as a single `db.batch` call.
+ *
+ * Returns the count of rows in the batch (not the number actually changed — D1
+ * `meta.changes` on an update-in-place is typically 0, which is fine; the rows
+ * are still refreshed).
+ */
+export async function syncExpansions(
+  db: D1Database,
+  rows: { id: number; game_id: number; code: string; name: string }[],
+): Promise<number> {
+  if (rows.length === 0) { return 0; }
+
+  const stmts = rows.map((r) =>
+    db
+      .prepare(
+        `INSERT INTO expansions (id, game_id, code, name, synced_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+           game_id   = excluded.game_id,
+           code      = excluded.code,
+           name      = excluded.name,
+           synced_at = datetime('now')`,
+      )
+      .bind(r.id, r.game_id, r.code, r.name),
+  );
+
+  await db.batch(stmts);
+  return rows.length;
+}
+
+/** Chunk size for blueprint batch operations. */
+const BLUEPRINT_CHUNK_SIZE = 200;
+
+/**
+ * Upsert a batch of blueprint rows from the CardTrader /blueprints/export feed.
+ *
+ * Large sets can have thousands of entries; this function splits the rows into
+ * chunks of `BLUEPRINT_CHUNK_SIZE` and fires each chunk as its own `db.batch`
+ * call to stay within D1's per-request statement limit.
+ *
+ * Returns the total count of rows processed (not the change count).
+ */
+export async function syncBlueprints(
+  db: D1Database,
+  rows: { id: number; expansion_id: number; name: string; scryfall_id: string | null; image_url: string | null }[],
+): Promise<number> {
+  if (rows.length === 0) { return 0; }
+
+  for (let offset = 0; offset < rows.length; offset += BLUEPRINT_CHUNK_SIZE) {
+    const chunk = rows.slice(offset, offset + BLUEPRINT_CHUNK_SIZE);
+    const stmts = chunk.map((r) =>
+      db
+        .prepare(
+          `INSERT INTO blueprints (id, expansion_id, name, scryfall_id, image_url, synced_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(id) DO UPDATE SET
+             expansion_id = excluded.expansion_id,
+             name         = excluded.name,
+             scryfall_id  = excluded.scryfall_id,
+             image_url    = excluded.image_url,
+             synced_at    = datetime('now')`,
+        )
+        .bind(r.id, r.expansion_id, r.name, r.scryfall_id, r.image_url),
+    );
+    await db.batch(stmts);
+  }
+
+  return rows.length;
+}
+
+/**
+ * Return the count of rows in the `expansions` cache table.
+ * A count of 0 means the cache has never been populated.
+ */
+export async function countExpansions(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM expansions`)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * Return the count of blueprint rows cached for the given expansion id.
+ * A count of 0 means the cache for this expansion has not been populated yet.
+ */
+export async function countBlueprintsForExpansion(
+  db: D1Database,
+  expansionId: number,
+): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM blueprints WHERE expansion_id = ?`)
+    .bind(expansionId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * Return true if the expansions cache is empty OR the most-recently synced row
+ * is older than `maxAgeDays` days.
+ *
+ * The staleness check is intentionally simple: we query the newest `synced_at`
+ * value in the table.  If the table is empty that query returns null, which we
+ * treat as stale.
+ */
+export async function expansionsStale(
+  db: D1Database,
+  maxAgeDays: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT MAX(synced_at) AS newest FROM expansions`)
+    .first<{ newest: string | null }>();
+
+  if (!row || row.newest === null) { return true; }
+
+  // newest is an ISO-ish UTC string (datetime('now') in SQLite: "YYYY-MM-DD HH:MM:SS").
+  const ageMs = Date.now() - new Date(row.newest + 'Z').getTime();
+  const ageDays = ageMs / 86_400_000;
+  return ageDays >= maxAgeDays;
+}
+
+// ---------------------------------------------------------------------------
 // Cache search helpers (Phase 3 — /api/resolve)
 // ---------------------------------------------------------------------------
 

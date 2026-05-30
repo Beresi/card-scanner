@@ -12,8 +12,14 @@
  * NEVER log the Bearer token. NEVER call purchase/checkout endpoints.
  */
 
-import type { Info, MarketplaceQuery, MarketplaceResponse } from './types';
-import { parseInfo, parseMarketplaceResponse, CardTraderError } from './types';
+import type { Info, MarketplaceQuery, MarketplaceResponse, Expansion, Blueprint } from './types';
+import {
+  parseInfo,
+  parseMarketplaceResponse,
+  parseExpansionArray,
+  parseBlueprintArray,
+  CardTraderError,
+} from './types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,6 +38,17 @@ const BACKOFF_BASE_MS = 1_000;         // 1s → 2s → 4s → 8s → 16s
 export interface CardTraderClient {
   info(): Promise<Info>;
   marketplaceProducts(q: MarketplaceQuery): Promise<MarketplaceResponse>;
+  /**
+   * GET /expansions — all expansions across all games.
+   * Filter to MTG (game_id = 1) at the cache/route layer if needed.
+   * Throttled through the same ~1 req/s queue as every other method.
+   */
+  expansions(): Promise<Expansion[]>;
+  /**
+   * GET /blueprints/export?expansion_id=<id> — all blueprint printings for
+   * a set. Large sets can return many rows. Throttled through the same queue.
+   */
+  blueprintsExport(expansionId: number): Promise<Blueprint[]>;
 }
 
 export interface ClientOptions {
@@ -157,7 +174,22 @@ export function createCardTraderClient(
     });
   }
 
-  return { info, marketplaceProducts };
+  async function expansions(): Promise<Expansion[]> {
+    return throttled(async () => {
+      const raw = await ctFetch('/expansions');
+      return parseExpansionArray(raw);
+    });
+  }
+
+  async function blueprintsExport(expansionId: number): Promise<Blueprint[]> {
+    const path = `/blueprints/export?expansion_id=${expansionId}`;
+    return throttled(async () => {
+      const raw = await ctFetch(path);
+      return parseBlueprintArray(raw, expansionId);
+    });
+  }
+
+  return { info, marketplaceProducts, expansions, blueprintsExport };
 }
 
 // ---------------------------------------------------------------------------

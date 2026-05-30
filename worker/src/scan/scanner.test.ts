@@ -145,6 +145,12 @@ function buildUnauthorisedClient(): CardTraderClient {
     marketplaceProducts: vi.fn().mockRejectedValue(
       new Error('marketplaceProducts must not be called on a 401 abort'),
     ),
+    expansions: vi.fn().mockRejectedValue(
+      new Error('expansions must not be called on a 401 abort'),
+    ),
+    blueprintsExport: vi.fn().mockRejectedValue(
+      new Error('blueprintsExport must not be called on a 401 abort'),
+    ),
   };
 }
 
@@ -238,6 +244,8 @@ describe('runScan — §16 case 10: forced API 401', () => {
         );
       },
       marketplaceProducts: vi.fn(),
+      expansions: vi.fn(),
+      blueprintsExport: vi.fn(),
     };
 
     // Wire onRequest through the real clientFactory path: the scanner passes

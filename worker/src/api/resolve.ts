@@ -1,27 +1,74 @@
 /**
- * GET /api/resolve/expansions   — search cached expansions by name/code.
- * GET /api/resolve/blueprints   — search cached blueprints within an expansion.
+ * GET /api/resolve/expansions   — fetch+cache expansions from CardTrader, then search.
+ * GET /api/resolve/blueprints   — fetch+cache blueprints for an expansion, then search.
  *
- * These routes serve the add-card UX: the desktop types a set name, picks an
- * expansion, then picks a card (blueprint).  The cache tables are populated by
- * a future sync job; returning [] when the cache is empty is correct behaviour.
+ * These routes serve the add-card UX: the user types a set name, picks an
+ * expansion, then picks a card (blueprint).  On first access the cache is empty,
+ * so the route fetches from CardTrader, filters to MTG (game_id === 1), stores
+ * the results in D1, and returns the search results.  Subsequent requests with a
+ * warm cache skip the CardTrader fetch entirely.
+ *
+ * Staleness / empty-cache logic:
+ *  - Expansions: refresh when the table is empty OR the newest synced_at is older
+ *    than EXPANSIONS_MAX_AGE_DAYS (7 days).
+ *  - Blueprints: refresh when there are 0 rows for the requested expansion_id.
+ *    (Blueprint sets are stable; once cached they are considered permanent.)
+ *
+ * Fallback on upstream error:
+ *  - If the CardTrader fetch fails AND the cache is non-empty → search the cache.
+ *  - If the CardTrader fetch fails AND the cache is empty → 502 {error:'upstream'}.
+ *
+ * Client-injection seam:
+ *  `createResolveRouter(deps?)` accepts an optional `deps.createClient` factory,
+ *  exactly mirroring ScanDeps in scanner.ts.  When omitted the real
+ *  `createCardTraderClient` is used.  Tests pass a mock factory so no real HTTP
+ *  calls are ever made.
+ *
+ * No-purchase guardrail: only GET /expansions and GET /blueprints/export are
+ * called.  No cart, checkout, or purchase path exists in this module.
  *
  * Auth: inherited from the Bearer gate mounted on /api/* in index.ts.
- * No business logic — delegates to repo.searchExpansions / repo.searchBlueprints.
- *
  * PRD §10; docs/documentation/http-api.md.
  */
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../index';
-import { searchExpansions, searchBlueprints } from '../db/repo';
+import {
+  createCardTraderClient,
+  type CardTraderClient,
+} from '../cardtrader/client';
+import {
+  searchExpansions,
+  searchBlueprints,
+  countExpansions,
+  countBlueprintsForExpansion,
+  syncExpansions,
+  syncBlueprints,
+  expansionsStale,
+} from '../db/repo';
 import { parseIntParam } from './validate';
 
-export const resolveRouter = new Hono<{ Bindings: Env }>();
+// ---------------------------------------------------------------------------
+// Injectable dependencies — mirrors ScanDeps in scanner.ts
+// ---------------------------------------------------------------------------
+
+/** Factory signature — the same type as `createCardTraderClient`. */
+type CreateClientFn = typeof createCardTraderClient;
+
+export interface ResolveDeps {
+  createClient?: CreateClientFn;
+}
 
 // ---------------------------------------------------------------------------
-// Error mapping — invalid_request → 400, unexpected → 500 (no internals leaked).
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Refresh the expansions cache when the newest synced_at is older than this. */
+const EXPANSIONS_MAX_AGE_DAYS = 7;
+
+// ---------------------------------------------------------------------------
+// Error mapping
 // ---------------------------------------------------------------------------
 
 function handleError(err: unknown, c: Context<{ Bindings: Env }>) {
@@ -33,48 +80,161 @@ function handleError(err: unknown, c: Context<{ Bindings: Env }>) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /expansions — search by name or code
+// Factory — accepts injected deps for testability
 // ---------------------------------------------------------------------------
 
-resolveRouter.get('/expansions', async (c) => {
-  try {
-    const q = c.req.query('q') ?? '';
+/**
+ * Build the resolve router with optional injected dependencies.
+ *
+ * Pass `deps.createClient` to replace the real CardTrader client with a mock
+ * in tests.  In production `index.ts` calls `createResolveRouter()` with no
+ * arguments and the real client is used.
+ */
+export function createResolveRouter(deps?: ResolveDeps): Hono<{ Bindings: Env }> {
+  const clientFactory: CreateClientFn = deps?.createClient ?? createCardTraderClient;
 
-    // No query string or empty → return empty array (nothing to search).
-    if (q.trim() === '') {
-      return c.json([]);
+  const router = new Hono<{ Bindings: Env }>();
+
+  // -------------------------------------------------------------------------
+  // GET /expansions — fetch+cache MTG expansions, then search by name or code
+  // -------------------------------------------------------------------------
+
+  router.get('/expansions', async (c) => {
+    try {
+      const q = c.req.query('q') ?? '';
+
+      // Return empty array immediately when q is blank — nothing to search.
+      if (q.trim() === '') {
+        return c.json([]);
+      }
+
+      const db = c.env.DB;
+
+      // Determine whether we need to refresh from CardTrader.
+      const needRefresh = await expansionsStale(db, EXPANSIONS_MAX_AGE_DAYS);
+
+      if (needRefresh) {
+        // Attempt upstream fetch.
+        let fetchSucceeded = false;
+        try {
+          // No onRequest counter needed here (no scan_runs row for resolve).
+          const client: CardTraderClient = clientFactory(c.env.CARDTRADER_API_TOKEN);
+          const all = await client.expansions();
+
+          // Filter to MTG only (game_id === 1) before caching.
+          const mtg = all.filter((e) => e.game_id === 1);
+
+          await syncExpansions(
+            db,
+            mtg.map((e) => ({
+              id: e.id,
+              game_id: e.game_id,
+              code: e.code,
+              name: e.name,
+            })),
+          );
+          fetchSucceeded = true;
+        } catch (fetchErr) {
+          // Never leak CardTrader internals.
+          console.error('[resolve] expansions fetch failed', {
+            error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+          });
+        }
+
+        if (!fetchSucceeded) {
+          // Check if we have anything cached to fall back to.
+          const cached = await countExpansions(db);
+          if (cached === 0) {
+            // Empty cache + failed fetch → 502.
+            return c.json({ error: 'upstream' }, 502);
+          }
+          // Non-empty cache → fall through to search below.
+        }
+      }
+
+      const rows = await searchExpansions(db, q);
+      return c.json(rows);
+    } catch (err) {
+      return handleError(err, c);
     }
+  });
 
-    const rows = await searchExpansions(c.env.DB, q);
-    return c.json(rows);
-  } catch (err) {
-    return handleError(err, c);
-  }
-});
+  // -------------------------------------------------------------------------
+  // GET /blueprints — fetch+cache a set's blueprints, then search by name
+  // -------------------------------------------------------------------------
+
+  router.get('/blueprints', async (c) => {
+    try {
+      // expansion_id is REQUIRED.
+      const rawExpansionId = c.req.query('expansion_id');
+      if (rawExpansionId === undefined || rawExpansionId === '') {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+
+      const expansion_id = parseIntParam(rawExpansionId);
+      if (expansion_id === undefined) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+
+      const q = c.req.query('q') ?? '';
+      const db = c.env.DB;
+
+      // Refresh if there are no blueprints cached for this expansion.
+      const cachedCount = await countBlueprintsForExpansion(db, expansion_id);
+
+      if (cachedCount === 0) {
+        let fetchSucceeded = false;
+        try {
+          const client: CardTraderClient = clientFactory(c.env.CARDTRADER_API_TOKEN);
+          const blueprints = await client.blueprintsExport(expansion_id);
+
+          await syncBlueprints(
+            db,
+            blueprints.map((b) => ({
+              id: b.id,
+              expansion_id: b.expansion_id,
+              name: b.name,
+              scryfall_id: b.scryfall_id ?? null,
+              image_url: b.image_url ?? null,
+            })),
+          );
+          fetchSucceeded = true;
+        } catch (fetchErr) {
+          console.error('[resolve] blueprints fetch failed', {
+            expansionId: expansion_id,
+            error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+          });
+        }
+
+        if (!fetchSucceeded) {
+          // Re-check: perhaps the fetch silently added nothing (empty set).
+          const afterCount = await countBlueprintsForExpansion(db, expansion_id);
+          if (afterCount === 0) {
+            // Empty cache + failed fetch → 502.
+            return c.json({ error: 'upstream' }, 502);
+          }
+          // Non-zero after re-check means a concurrent request or race filled it.
+        }
+      }
+
+      const rows = await searchBlueprints(db, expansion_id, q);
+      return c.json(rows);
+    } catch (err) {
+      return handleError(err, c);
+    }
+  });
+
+  return router;
+}
 
 // ---------------------------------------------------------------------------
-// GET /blueprints — search within a specific expansion
+// Default export — the pre-built router used by index.ts
 // ---------------------------------------------------------------------------
 
-resolveRouter.get('/blueprints', async (c) => {
-  try {
-    // expansion_id is REQUIRED.
-    const rawExpansionId = c.req.query('expansion_id');
-    if (rawExpansionId === undefined || rawExpansionId === '') {
-      return c.json({ error: 'invalid_request' }, 400);
-    }
-
-    // parseIntParam throws Error('invalid_request') on non-integer.
-    const expansion_id = parseIntParam(rawExpansionId);
-    if (expansion_id === undefined) {
-      return c.json({ error: 'invalid_request' }, 400);
-    }
-
-    const q = c.req.query('q') ?? '';
-
-    const rows = await searchBlueprints(c.env.DB, expansion_id, q);
-    return c.json(rows);
-  } catch (err) {
-    return handleError(err, c);
-  }
-});
+/**
+ * The resolve router instance used by the Hono app in index.ts.
+ * Constructed with the real CardTrader client (no injected mock).
+ *
+ * index.ts mounts this as: `app.route('/api/resolve', resolveRouter)`
+ */
+export const resolveRouter: Hono<{ Bindings: Env }> = createResolveRouter();

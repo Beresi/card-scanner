@@ -1,4 +1,4 @@
-import type { Config, Deal, Health, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, ResettableField } from './types';
+import type { Config, Deal, Health, ResolveBlueprint, ResolveExpansion, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, ResettableField } from './types';
 
 // ---------------------------------------------------------------------------
 // Environment — base URL and dev token come from Vite env vars.
@@ -197,6 +197,38 @@ export function getScanRuns(): Promise<ScanRun[]> {
 // ---------------------------------------------------------------------------
 // Scan now
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Resolve / search helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/resolve/expansions?q=<str>
+ *
+ * Returns matching expansions (sets) from the server-side CardTrader cache.
+ * Blank q returns []. First call may take ~1-2s (server fetches + caches).
+ * Throws ApiError on non-2xx (notably 502 "upstream" when CardTrader is unreachable).
+ */
+export function getResolveExpansions(q: string): Promise<ResolveExpansion[]> {
+  const params = new URLSearchParams({ q });
+  return apiFetch<ResolveExpansion[]>(`/api/resolve/expansions?${params.toString()}`);
+}
+
+/**
+ * GET /api/resolve/blueprints?expansion_id=<int>&q=<str>
+ *
+ * Returns matching blueprints (cards) within the given expansion.
+ * expansion_id is required (server returns 400 if missing).
+ * First call for a given expansion may take ~1-2s; subsequent calls are fast.
+ * Throws ApiError on non-2xx (400 missing expansion_id, 502 upstream).
+ */
+export function getResolveBlueprints(expansionId: number, q: string): Promise<ResolveBlueprint[]> {
+  const params = new URLSearchParams({
+    expansion_id: String(expansionId),
+    q,
+  });
+  return apiFetch<ResolveBlueprint[]>(`/api/resolve/blueprints?${params.toString()}`);
+}
 
 /** POST /api/scan/run-now — trigger an immediate scan. */
 export function runScanNow(): Promise<ScanNowResult> {

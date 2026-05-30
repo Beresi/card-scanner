@@ -174,6 +174,26 @@ export type WatchItemCreate = {
 export type ResettableField = 'threshold_pct' | 'telegram_min_discount_pct';
 
 // ---------------------------------------------------------------------------
+// Resolve — search results from the expansion / blueprint resolve cache
+// ---------------------------------------------------------------------------
+
+/** One expansion (set) result from GET /api/resolve/expansions?q= */
+export interface ResolveExpansion {
+  id: number;
+  game_id: number;
+  code: string;
+  name: string;
+}
+
+/** One blueprint (card) result from GET /api/resolve/blueprints?expansion_id=&q= */
+export interface ResolveBlueprint {
+  id: number;
+  expansion_id: number;
+  name: string;
+  image_url: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // ScanNowResult — response body of POST /api/scan/run-now
 // ---------------------------------------------------------------------------
 export interface ScanNowResult {

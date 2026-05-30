@@ -6,6 +6,8 @@ import {
   getConfig,
   getDeals,
   getHealth,
+  getResolveBlueprints,
+  getResolveExpansions,
   getScanRuns,
   getWatchlist,
   patchConfig,
@@ -14,7 +16,7 @@ import {
   resetWatchField,
   runScanNow,
 } from './client';
-import type { Config, Deal, Health, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
+import type { Config, Deal, Health, ResolveBlueprint, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
 
 // ---------------------------------------------------------------------------
 // Filter shape — used by the Deal Feed command bar
@@ -211,6 +213,48 @@ export function useResetWatchField() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['watchlist'] });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Resolve / search hooks (add-flow search-as-you-type)
+// ---------------------------------------------------------------------------
+
+/**
+ * useResolveExpansions — search expansions (sets) by name.
+ *
+ * Query key: ['resolve', 'expansions', q]
+ * Enabled only when q has at least 2 non-space chars (avoids firing on empty/1-char).
+ * staleTime: 5 min — the server cache is stable; no need to refetch on every re-mount.
+ *
+ * First call may take ~1-2s (server fetches all expansions from CardTrader + caches);
+ * subsequent calls for any q hit the server cache and are fast.
+ */
+export function useResolveExpansions(q: string) {
+  return useQuery<ResolveExpansion[], Error>({
+    queryKey: ['resolve', 'expansions', q] as const,
+    queryFn: () => getResolveExpansions(q),
+    enabled: q.trim().length >= 2,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * useResolveBlueprints — search blueprints (cards) within a chosen expansion.
+ *
+ * Query key: ['resolve', 'blueprints', expansionId, q]
+ * Enabled only when expansionId is non-null AND q has at least 2 non-space chars.
+ * staleTime: 5 min — set blueprint lists are stable within a session.
+ *
+ * First call for a given expansion may take ~1-2s (server fetches that set's blueprints
+ * from CardTrader + caches); subsequent q changes within that expansion are fast.
+ */
+export function useResolveBlueprints(expansionId: number | null, q: string) {
+  return useQuery<ResolveBlueprint[], Error>({
+    queryKey: ['resolve', 'blueprints', expansionId, q] as const,
+    queryFn: () => getResolveBlueprints(expansionId!, q),
+    enabled: expansionId !== null && q.trim().length >= 2,
+    staleTime: 5 * 60_000,
   });
 }
 

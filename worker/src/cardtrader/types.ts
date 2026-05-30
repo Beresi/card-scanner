@@ -124,11 +124,18 @@ export interface Info {
 
 // ---------------------------------------------------------------------------
 // Expansion — expansions cache (set-watching + add-card UX). Minimal per PRD §6.
+//
+// The CardTrader wire uses `name_en` for the human-readable set name. We
+// normalise this to `name` on the parsed shape for consumer convenience and
+// keep `name_en` as well so existing callers that reference it still compile.
 // ---------------------------------------------------------------------------
 
 export interface Expansion {
   id: number;
   code: string;
+  /** Normalised display name (sourced from `name_en` on the wire). */
+  name: string;
+  /** Raw wire field; same value as `name`. Kept for API-shape fidelity. */
   name_en: string;
   /** game_id is always 1 (MTG) but typed for completeness. */
   game_id: number;
@@ -137,6 +144,10 @@ export interface Expansion {
 // ---------------------------------------------------------------------------
 // Blueprint — blueprints cache (add-card search + display). Minimal per PRD §6.
 //
+// The CardTrader /blueprints/export wire shape is not fully documented; we
+// capture the guaranteed fields (id, name, expansion_id, game_id) strictly and
+// treat image_url / scryfall_id as optional (absent on many printings).
+//
 // VERIFY: buy-URL pattern is unverified (PRD §6 / §13).
 // Likely: https://www.cardtrader.com/cards/{blueprint_id}
 // Confirm the real public URL during build; fall back to a search URL if needed.
@@ -144,16 +155,53 @@ export interface Expansion {
 
 export interface Blueprint {
   id: number;
-  name_en: string;
+  /** Card name as returned by the wire (name_en field). */
+  name: string;
   expansion_id: number;
-  /** Expansion code (e.g. "ptkdf") for display and cache look-up. */
-  expansion_code?: string;
+  game_id: number;
+  /** Card image URL when provided by the API (may be absent). */
+  image_url?: string | null;
+  /** Scryfall UUID when provided by the API (may be absent). */
+  scryfall_id?: string | null;
 }
 
 // ---------------------------------------------------------------------------
 // Boundary parsers — narrow `unknown` → typed. Pure functions: no I/O.
 // Throw CardTraderError on any structural violation.
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse the GET /expansions response body (an array of expansion objects).
+ * Required fields (id, code, game_id) are validated strictly; name is sourced
+ * from `name_en` on the wire (the documented field name). If `name_en` is
+ * absent but `name` is present we fall back to that, tolerating API variation.
+ */
+export function parseExpansionArray(raw: unknown): Expansion[] {
+  if (!Array.isArray(raw)) {
+    throw new CardTraderError(
+      '/expansions response: expected an array, got ' + typeof raw,
+      '/expansions',
+    );
+  }
+  return raw.map((item, index) => parseExpansion(item, index));
+}
+
+/**
+ * Parse the GET /blueprints/export response body (an array of blueprint objects).
+ * Required fields (id, name, expansion_id, game_id) are validated strictly.
+ * Optional fields (image_url, scryfall_id) are extracted when present and
+ * well-typed; silently dropped otherwise — the /blueprints/export shape
+ * varies across set sizes and API versions.
+ */
+export function parseBlueprintArray(raw: unknown, expansionId: number): Blueprint[] {
+  if (!Array.isArray(raw)) {
+    throw new CardTraderError(
+      `/blueprints/export?expansion_id=${expansionId} response: expected an array, got ` + typeof raw,
+      `/blueprints/export`,
+    );
+  }
+  return raw.map((item, index) => parseBlueprint(item, index, expansionId));
+}
 
 /**
  * Validates that `raw` is an object keyed by blueprint id strings, each
@@ -315,6 +363,92 @@ function parseProductUser(raw: unknown, ctx: string, endpoint: string): ProductU
     username: requireString(p['username'], ctx + '.username', endpoint),
     can_sell_via_hub: requireBoolean(p['can_sell_via_hub'], ctx + '.can_sell_via_hub', endpoint),
     country_code: requireString(p['country_code'], ctx + '.country_code', endpoint),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Expansion / Blueprint helpers
+// ---------------------------------------------------------------------------
+
+function parseExpansion(raw: unknown, index: number): Expansion {
+  const ctx = `expansion[${index}]`;
+  const endpoint = '/expansions';
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CardTraderError(`${ctx}: expected an object`, endpoint);
+  }
+
+  const e = raw as Record<string, unknown>;
+
+  const id = requireInteger(e['id'], ctx + '.id', endpoint);
+  const code = requireString(e['code'], ctx + '.code', endpoint);
+  const game_id = requireInteger(e['game_id'], ctx + '.game_id', endpoint);
+
+  // The wire field is `name_en`; tolerate a plain `name` as a fallback.
+  const rawName = e['name_en'] ?? e['name'];
+  const name_en = typeof rawName === 'string' ? rawName : '';
+  const name = name_en;
+
+  return { id, code, name, name_en, game_id };
+}
+
+function parseBlueprint(raw: unknown, index: number, expansionId: number): Blueprint {
+  const ctx = `blueprint[${index}]`;
+  const endpoint = `/blueprints/export`;
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CardTraderError(`${ctx}: expected an object`, endpoint);
+  }
+
+  const b = raw as Record<string, unknown>;
+
+  const id = requireInteger(b['id'], ctx + '.id', endpoint);
+
+  // `name_en` is the documented field; fall back to `name` for API variation.
+  const rawName = b['name_en'] ?? b['name'];
+  const name = typeof rawName === 'string' ? rawName : '';
+  if (!name) {
+    throw new CardTraderError(
+      `${ctx}: missing name (name_en/name) for blueprint id ${id}`,
+      endpoint,
+    );
+  }
+
+  const blueprint_expansion_id = requireInteger(
+    b['expansion_id'],
+    ctx + '.expansion_id',
+    endpoint,
+  );
+
+  const game_id = requireInteger(b['game_id'], ctx + '.game_id', endpoint);
+
+  // Optional fields — accept string or null; absent fields become undefined.
+  const image_url =
+    b['image_url'] === undefined
+      ? undefined
+      : typeof b['image_url'] === 'string' || b['image_url'] === null
+        ? (b['image_url'] as string | null)
+        : undefined;
+
+  const scryfall_id =
+    b['scryfall_id'] === undefined
+      ? undefined
+      : typeof b['scryfall_id'] === 'string' || b['scryfall_id'] === null
+        ? (b['scryfall_id'] as string | null)
+        : undefined;
+
+  // Defensive: ignore expansionId mismatch rather than throwing (API is
+  // expected to return the correct set but we don't want a stale cache entry
+  // to fail the whole import).
+  void expansionId;
+
+  return {
+    id,
+    name,
+    expansion_id: blueprint_expansion_id,
+    game_id,
+    image_url,
+    scryfall_id,
   };
 }
 
