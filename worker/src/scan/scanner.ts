@@ -310,6 +310,21 @@ async function runWholeset(
 const MAX_CACHE_WARMUPS_PER_RUN = 2;
 
 /**
+ * Per-run wall-clock budget for the chunked rotation loop (ms). Scheduled (cron)
+ * invocations have a TIGHTER execution-time limit than a request handler, so a
+ * full ~40-card batch (≈40-55s at ~1 req/s) gets killed mid-run on the cron path.
+ * Stop the loop well under that limit so each run finishes cleanly.
+ */
+const CHUNKED_RUN_BUDGET_MS = 20_000;
+
+/**
+ * Persist rotation progress every N blueprints (not once at the end). If a run
+ * is still killed mid-batch, the cursor has already advanced for what it did —
+ * so the same cards are never retried forever (no permanent stall).
+ */
+const MARK_FLUSH_EVERY = 8;
+
+/**
  * Chunked scan mode — rotates through blueprints across all active expansions,
  * scanning at most config.scan_batch_size blueprints per run.
  *
@@ -431,19 +446,35 @@ async function runChunked(
   }
 
   const toScan = await selectBlueprintsToScan(db, expansionIds, remaining);
-  const scannedIds: number[] = [];
+
+  // Mark scanned blueprints in small chunks AS WE GO (not once at the end) and
+  // stop at the per-run time budget — so a cron run killed mid-batch still
+  // advances the rotation cursor instead of retrying the same cards forever.
+  const startMs = Date.now();
+  let pending: number[] = [];
+
+  async function flushPending(): Promise<void> {
+    if (pending.length > 0) {
+      const batch = pending;
+      pending = [];
+      await markBlueprintsScanned(db, batch);
+    }
+  }
 
   for (const bp of toScan) {
+    // Stop cleanly once the per-run time budget is used.
+    if (Date.now() - startMs >= CHUNKED_RUN_BUDGET_MS) { break; }
+
     const ownerItem = expansionMap.get(bp.expansion_id);
     if (ownerItem === undefined) {
-      // Blueprint belongs to an expansion no longer on the active watchlist —
-      // mark scanned so it doesn't block the rotation, then skip.
-      scannedIds.push(bp.id);
+      // Expansion no longer active — mark scanned so it doesn't block rotation.
+      pending.push(bp.id);
+      if (pending.length >= MARK_FLUSH_EVERY) { await flushPending(); }
       continue;
     }
 
-    // Always mark as attempted (scanned) so the cursor advances even on error.
-    scannedIds.push(bp.id);
+    // Mark as attempted (scanned) so the cursor advances even on error.
+    pending.push(bp.id);
 
     try {
       await scanBlueprintById(bp.id, client, ownerItem, config, db, callbacks);
@@ -456,10 +487,12 @@ async function runChunked(
       });
       // Non-fatal; continue to next blueprint.
     }
+
+    if (pending.length >= MARK_FLUSH_EVERY) { await flushPending(); }
   }
 
-  // Advance the rotation cursor for all attempted blueprints.
-  await markBlueprintsScanned(db, scannedIds);
+  // Persist any remaining attempted blueprints.
+  await flushPending();
 }
 
 // ---------------------------------------------------------------------------
