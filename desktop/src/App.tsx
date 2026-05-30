@@ -43,8 +43,6 @@ import { Watchlist } from './views/watchlist/Watchlist';
 // Constants
 // ---------------------------------------------------------------------------
 
-const BOOTED_KEY = 'cardbroker_booted';
-
 interface NavEntry {
   key: ViewKey;
   label: string;
@@ -107,10 +105,9 @@ export function App() {
   const [view, setView] = useState<ViewKey>('feed');
 
   // ---- Boot gate ----
-  // Read once from localStorage; after BootSequence.onDone() it is written + set true.
-  const [booted, setBooted] = useState<boolean>(
-    () => localStorage.getItem(BOOTED_KEY) === '1',
-  );
+  // Boot plays on every launch (in-memory only — not persisted); skippable via
+  // click / Enter / Esc inside BootSequence.
+  const [booted, setBooted] = useState(false);
 
   // ---- Scan state ----
   const [scanning, setScanning]             = useState(false);
@@ -179,7 +176,6 @@ export function App() {
 
   // ---- Replay boot ----
   const onReplayBoot = useCallback(() => {
-    localStorage.removeItem(BOOTED_KEY);
     setBooted(false);
   }, []);
 
@@ -224,12 +220,7 @@ export function App() {
   if (!booted) {
     return (
       <>
-        <BootSequence
-          onDone={() => {
-            localStorage.setItem(BOOTED_KEY, '1');
-            setBooted(true);
-          }}
-        />
+        <BootSequence onDone={() => setBooted(true)} />
         {/* ToastHost stays accessible even during boot */}
         <ToastHost toasts={toasts} onDismiss={dismiss} />
       </>
