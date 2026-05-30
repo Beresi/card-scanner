@@ -15,65 +15,14 @@
    ============================================================ */
 
 /* ============================================================
-   FONT FACES — locally bundled (Tauri desktop app must not rely
-   on a runtime Google Fonts network fetch).
-   Font files go in: desktop/src/assets/fonts/
-   DEFERRED: actual .woff2 files not yet downloaded — add them and
-   uncomment these @font-face blocks before final packaging.
-   Until then the system fallback stack renders the UI.
+   FONT FACES — self-hosted via @fontsource, bundled by Vite (no
+   runtime Google Fonts fetch — Tauri-offline safe).
+   The @font-face declarations are imported in main.tsx BEFORE this
+   file: '@fontsource/chakra-petch/{400,500,600,700}.css' and
+   '@fontsource/ibm-plex-mono/{400,500,600}.css'. The --f-* token
+   stacks below reference the resulting 'Chakra Petch' / 'IBM Plex
+   Mono' families, falling back to system-ui / ui-monospace.
    ============================================================ */
-
-/*
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('../assets/fonts/ChakraPetch-Regular.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url('../assets/fonts/ChakraPetch-Medium.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('../assets/fonts/ChakraPetch-SemiBold.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('../assets/fonts/ChakraPetch-Bold.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'IBM Plex Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('../assets/fonts/IBMPlexMono-Regular.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'IBM Plex Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url('../assets/fonts/IBMPlexMono-Medium.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'IBM Plex Mono';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('../assets/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
-}
-*/
 
 /* ============================================================
    ROOT TOKEN BLOCK — DARK THEME (default)

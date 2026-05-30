@@ -4,6 +4,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { App } from "./App";
 import { EffectsProvider } from "./effects/EffectsContext";
+
+// Self-hosted fonts (bundled by Vite — no runtime CDN fetch, Tauri-offline safe).
+// Chakra Petch = display/UI; IBM Plex Mono = data/numbers/eyebrows. Weights match
+// the --f-* token stacks in tokens.css.
+import "@fontsource/chakra-petch/400.css";
+import "@fontsource/chakra-petch/500.css";
+import "@fontsource/chakra-petch/600.css";
+import "@fontsource/chakra-petch/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/components.css";
