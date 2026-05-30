@@ -571,17 +571,21 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   return (
     <div className="settings" style={{ padding: 'var(--pad)', maxWidth: 800, margin: '0 auto' }}>
 
-      {/* Tab bar — Segmented reused; its role="tablist" is already correct for a11y. */}
-      <div style={{ marginBottom: 16 }}>
-        <Segmented
-          value={tab}
-          options={TAB_OPTIONS as { value: string; label: string }[]}
-          onChange={(v) => setTab(v as SettingsTab)}
-        />
-      </div>
+      {/* Tab bar — chamfered sci-fi tabs (set-tabs); Segmented's role="tablist"
+          is correct for a11y. Sits flush on top of the content (no gap). */}
+      <Segmented
+        className="set-tabs"
+        value={tab}
+        options={TAB_OPTIONS as { value: string; label: string }[]}
+        onChange={(v) => setTab(v as SettingsTab)}
+      />
 
-      {/* Active tab content — one group visible at a time. */}
-      <div role="tabpanel" aria-label={TAB_OPTIONS.find((o) => o.value === tab)?.label}>
+      {/* Active tab content — one group visible at a time, flush under the tabs. */}
+      <div
+        role="tabpanel"
+        className="set-tabpanel"
+        aria-label={TAB_OPTIONS.find((o) => o.value === tab)?.label}
+      >
         {renderTabContent()}
       </div>
 

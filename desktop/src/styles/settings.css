@@ -17,7 +17,50 @@
 .settings {
   display: flex;
   flex-direction: column;
+  gap: 0; /* tabs sit flush on the content; panel spacing lives in .set-tabpanel */
+}
+
+/* Active-tab content: stack the panels with the usual spacing. */
+.set-tabpanel {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
+}
+
+/* ============================================================
+   SETTINGS TABS — chamfered sci-fi tab bar (set-tabs), flush with content.
+   Each tab is an angular cell with a cut top-right corner; the active tab
+   takes the accent like the primary "Scan now" button.
+   ============================================================ */
+.cb-seg.set-tabs {
+  display: flex;
+  border: 0;
+  background: transparent;
+  gap: 4px;
+}
+
+.set-tabs .cb-seg-opt {
+  border: 1px solid var(--line);
+  border-bottom: 0;            /* merge down into the content */
+  background: var(--panel-2);
+  padding: 9px 18px;
+  /* chamfer the top-right corner — the sci-fi cut */
+  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.set-tabs .cb-seg-opt:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+
+/* Active tab — accent fill + glow (drop-shadow respects the chamfer). */
+.set-tabs .cb-seg-opt.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  box-shadow: none;
+  filter: drop-shadow(0 0 calc(7px * var(--glow)) var(--accent-glow));
 }
 
 /* Each settings panel — compose with .cb-panel for the surface */
