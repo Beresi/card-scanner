@@ -2,7 +2,8 @@
  * App — root component.
  *
  * Owns:
- *   - 3-column shell, left-rail nav, active view switch
+ *   - 3-column shell: left rail (brand + nav + system foot), center stage
+ *     (per-view topstrip header + scrolling content), view-aware right rail
  *   - Boot gate (first-run BootSequence via localStorage 'cardbroker_booted')
  *   - Scan overlay (ScanOverlay, mock animation)
  *   - ⌘K / Ctrl+K command palette (CommandPalette)
@@ -13,14 +14,15 @@
  *
  * State is ephemeral only — server data lives in TanStack Query.
  * No per-second ticks at this level (Clock isolation rule: the only tickers
- * are Clock leaves inside Telemetry / Health).
+ * are Clock leaves inside the topstrip / rail-foot / Telemetry / Health).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Btn } from './components/Btn';
+import { Clock } from './components/Clock';
 import { Icon } from './components/Icon';
 import type { IconName } from './components/Icon';
+import { Status } from './components/Status';
 import { ToastHost, useToasts } from './components/Toast';
 import { useEffects } from './effects/EffectsContext';
 import { useMockDeals } from './mock/hooks';
@@ -43,7 +45,6 @@ import { Watchlist } from './views/watchlist/Watchlist';
 
 const BOOTED_KEY = 'cardbroker_booted';
 
-// Nav definition
 interface NavEntry {
   key: ViewKey;
   label: string;
@@ -57,11 +58,12 @@ const NAV: NavEntry[] = [
   { key: 'health',    label: 'Health',     icon: 'pulse' },
 ];
 
-const VIEW_ICON: Record<ViewKey, IconName> = {
-  feed:      'feed',
-  watchlist: 'watch',
-  settings:  'gear',
-  health:    'pulse',
+/** Per-view topstrip header + sub-header (eyebrow). */
+const TITLES: Record<ViewKey, [string, string]> = {
+  feed:      ['Deal Feed', 'underpriced-copy hunter · live'],
+  watchlist: ['Watchlist', 'cards & sets under surveillance'],
+  settings:  ['Settings', 'one config · the single source of truth'],
+  health:    ['Health', 'scanner observability'],
 };
 
 // ---------------------------------------------------------------------------
@@ -90,12 +92,7 @@ function ActiveView({ view, onReplayBoot, onClearDeals }: ActiveViewProps) {
     case 'watchlist':
       return <Watchlist />;
     case 'settings':
-      return (
-        <Settings
-          onReplayBoot={onReplayBoot}
-          onClearDeals={onClearDeals}
-        />
-      );
+      return <Settings onReplayBoot={onReplayBoot} onClearDeals={onClearDeals} />;
     case 'health':
       return <Health />;
   }
@@ -131,8 +128,10 @@ export function App() {
   // ---- Watchlist shared store (to branch the right rail + jump-to-item) ----
   const { selectedId, select: selectWatchItem } = useMockWatchlist();
 
-  // ---- Mock deals for scan-complete toasts ----
-  const { data: allDeals } = useMockDeals({ status: 'open', priority: 'high' });
+  // ---- Mock deals: high-priority for scan-complete toasts, open for the nav badge ----
+  const { data: priorityDeals } = useMockDeals({ status: 'open', priority: 'high' });
+  const { data: openDeals }     = useMockDeals({ status: 'open' });
+  const unseenCount = openDeals.filter((d) => d.seen === 0).length;
 
   // ---- Global ⌘K / Ctrl+K hotkey ----
   useEffect(() => {
@@ -158,7 +157,7 @@ export function App() {
     setView('feed');
 
     // Push 1–2 toasts from high-priority mock deals
-    const topDeals = allDeals.slice(0, 2);
+    const topDeals = priorityDeals.slice(0, 2);
     if (topDeals.length === 0) {
       push({
         title: 'Scan complete',
@@ -176,7 +175,7 @@ export function App() {
         });
       });
     }
-  }, [allDeals, push]);
+  }, [priorityDeals, push]);
 
   // ---- Replay boot ----
   const onReplayBoot = useCallback(() => {
@@ -237,110 +236,104 @@ export function App() {
     );
   }
 
+  const [title, subtitle] = TITLES[view];
+
   return (
     <>
-      {/* Global backdrop: 44px grid + vignette (z-index 0, pointer-events none) */}
+      {/* Global backdrop: grid + vignette (z-index 0, pointer-events none) */}
       <div className="cb-app-bg" aria-hidden="true" />
       <div className="cb-app-vignette" aria-hidden="true" />
 
       {/* 3-column shell */}
       <div className="cb-shell">
 
-        {/* Left rail — navigation */}
+        {/* Left rail — brand + navigation + system foot */}
         <aside className="cb-rail-left" aria-label="Main navigation">
-          {/* App wordmark */}
-          <div
-            style={{
-              padding: '16px var(--pad) 12px',
-              borderBottom: '1px solid var(--line)',
-            }}
-          >
-            <p className="cb-eyebrow" style={{ marginBottom: 0, fontSize: 10 }}>
-              card // broker
-            </p>
+          {/* Brand mark */}
+          <div className="rail-brand">
+            <span className="rail-glyph" aria-hidden="true">◈</span>
+            <span className="rail-brand-text">
+              <b>CARD</b><span className="rail-slash">//</span>BROKER
+            </span>
           </div>
 
           {/* Nav entries */}
-          <nav style={{ padding: '8px 0' }}>
-            {NAV.map(({ key, label }) => {
-              const isActive = view === key;
+          <nav className="rail-nav">
+            {NAV.map((entry) => {
+              const isActive = view === entry.key;
               return (
-                <Btn
-                  key={key}
-                  variant="ghost"
-                  onClick={() => setView(key)}
+                <button
+                  key={entry.key}
+                  type="button"
+                  className={isActive ? 'rail-item is-on' : 'rail-item'}
+                  onClick={() => setView(entry.key)}
                   aria-current={isActive ? 'page' : undefined}
-                  title={label}
-                  className={isActive ? 'cb-nav-active' : undefined}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    width: '100%',
-                    borderRadius: 0,
-                    clipPath: 'none',
-                    border: 'none',
-                    borderLeft: isActive
-                      ? '2px solid var(--accent)'
-                      : '2px solid transparent',
-                    paddingLeft: 16,
-                    color: isActive ? 'var(--text)' : 'var(--text-dim)',
-                    background: isActive ? 'var(--panel-2)' : 'transparent',
-                    fontFamily: 'var(--f-display)',
-                    fontSize: 13,
-                    fontWeight: isActive ? 600 : 500,
-                    letterSpacing: '0.04em',
-                    marginBottom: 2,
-                  }}
                 >
-                  <Icon name={VIEW_ICON[key]} size={15} />
-                  {label}
-                </Btn>
+                  <Icon name={entry.icon} size={18} />
+                  <span>{entry.label}</span>
+                  {entry.key === 'feed' && unseenCount > 0 && (
+                    <span className="rail-badge cb-mono">{unseenCount}</span>
+                  )}
+                  {isActive && <span className="rail-active-bar" aria-hidden="true" />}
+                </button>
               );
             })}
           </nav>
 
-          {/* ⌘K hint chip at the bottom of the left rail */}
-          <div
-            style={{
-              marginTop: 'auto',
-              padding: '12px var(--pad)',
-              borderTop: '1px solid var(--line)',
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              aria-label="Open command palette (⌘K)"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                background: 'transparent',
-                border: '1px solid var(--line)',
-                color: 'var(--text-faint)',
-                fontFamily: 'var(--f-mono)',
-                fontSize: 10,
-                padding: '5px 9px',
-                cursor: 'pointer',
-                width: '100%',
-                letterSpacing: '0.06em',
-              }}
-            >
-              <Icon name="search" size={11} />
-              ⌘K
-            </button>
+          {/* System status foot */}
+          <div className="rail-foot">
+            <div className="rail-sys">
+              <div className="rail-sys-row">
+                <Status tone="good" label="SCANNER ONLINE" />
+              </div>
+              <div className="rail-sys-row">
+                <span className="cb-eyebrow">next scan</span>
+                <Clock target={nextScanTarget} className="cb-mono cb-text-accent" />
+              </div>
+              <div className="rail-sys-row">
+                <span className="cb-eyebrow">currency</span>
+                <span className="cb-mono">USD</span>
+              </div>
+            </div>
           </div>
         </aside>
 
-        {/* Center stage */}
+        {/* Center stage — topstrip header + scrolling content */}
         <main className="cb-stage">
+          <header className="topstrip">
+            <div className="topstrip-title">
+              <h1>{title}</h1>
+              <span className="cb-eyebrow">{subtitle}</span>
+            </div>
+            <div className="topstrip-right">
+              <button
+                type="button"
+                className="cmdk-chip"
+                onClick={() => setPaletteOpen(true)}
+                title="Command palette (⌘K)"
+                aria-label="Open command palette"
+              >
+                <Icon name="search" size={13} />
+                <span className="cb-mono">⌘K</span>
+              </button>
+              <span className="topstrip-div" aria-hidden="true" />
+              <div className="topstrip-clock">
+                <span className="cb-eyebrow">next scan</span>
+                <Clock target={nextScanTarget} className="cb-mono cb-text-accent" />
+              </div>
+              <span className="topstrip-div" aria-hidden="true" />
+              <Status tone="good" label="API 200" />
+            </div>
+          </header>
+
           <div className="cb-stage-scroll">
-            <ActiveView
-              view={view}
-              onReplayBoot={onReplayBoot}
-              onClearDeals={onClearDeals}
-            />
+            <div className="stage-inner">
+              <ActiveView
+                view={view}
+                onReplayBoot={onReplayBoot}
+                onClearDeals={onClearDeals}
+              />
+            </div>
           </div>
         </main>
 
