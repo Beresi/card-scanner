@@ -1,0 +1,580 @@
+/* ============================================================
+   CARD // BROKER — Component Layer
+   cb- primitive classes and feed/deal-card layout.
+   Imported by main.tsx after base.css.
+
+   All colors reference var(--…) tokens — no literal hex.
+   The handoff prototype uses var(--line-accent) for the
+   accent-tinted hairline; that is not a named token in the
+   real system. Every occurrence is replaced with the correct
+   color-mix derivation:
+     color-mix(in oklab, var(--accent) 40%, transparent)
+   ============================================================ */
+
+/* ============================================================
+   A. PANEL PRIMITIVES
+   cb-panel, cb-panel-glow, cb-panel-head, cb-panel-right,
+   cb-panel-body
+   ============================================================ */
+
+.cb-panel {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line);
+  position: relative;
+  border-radius: var(--radius);
+}
+
+/* When cb-chamfer or cb-chamfer-sm is composed, use outline so
+   the chamfer clip-path is not hidden by the border box. */
+.cb-panel.cb-chamfer,
+.cb-panel.cb-chamfer-sm {
+  border: 0;
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+
+/* Glow variant — accent-tinted outline + ambient shadow */
+.cb-panel-glow {
+  outline: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  outline-offset: -1px;
+  box-shadow: 0 0 calc(28px * var(--glow)) color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+/* Panel header row — eyebrow + title on the left, right slot on the right */
+.cb-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px var(--pad) 0;
+}
+
+/* Right slot in panel header (holds Btn / Status / Tag / etc.) */
+.cb-panel-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Panel body — the main content area with full padding */
+.cb-panel-body {
+  padding: var(--pad);
+}
+
+/* ============================================================
+   B. BUTTON PRIMITIVES
+   cb-btn, cb-btn-primary, cb-btn-ghost, cb-btn-quiet,
+   cb-btn-danger
+   ============================================================ */
+
+.cb-btn {
+  /* Typography */
+  font-family: var(--f-display);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+
+  /* Layout */
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+
+  /* Surface */
+  background: var(--panel-3);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  cursor: pointer;
+
+  /* Shape: small chamfer (7px) — the signature button shape */
+  clip-path: polygon(
+    0 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% 100%,
+    7px 100%,
+    0 calc(100% - 7px)
+  );
+
+  /* Interaction */
+  transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+}
+
+.cb-btn:hover {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  color: var(--text);
+}
+
+.cb-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Primary — filled with accent color, strong glow */
+.cb-btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 0 calc(18px * var(--glow)) var(--accent-glow);
+}
+
+.cb-btn-primary:hover {
+  background: color-mix(in oklab, var(--accent) 88%, #fff);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+/* Danger — hot-tinted outline, escalates on hover */
+.cb-btn-danger {
+  color: var(--hot);
+  border-color: color-mix(in oklab, var(--hot) 40%, transparent);
+  background: transparent;
+}
+
+.cb-btn-danger:hover {
+  background: color-mix(in oklab, var(--hot) 14%, transparent);
+  color: var(--text);
+}
+
+/* Quiet — low-emphasis, transparent background.
+   cb-btn-ghost is a semantic alias emitted by Btn.tsx for variant="ghost";
+   they share identical visual rules. */
+.cb-btn-quiet,
+.cb-btn-ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text-dim);
+}
+
+.cb-btn-quiet:hover,
+.cb-btn-ghost:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+/* ============================================================
+   C. TAG PRIMITIVES
+   cb-tag, cb-tag-accent, cb-tag-good, cb-tag-hot, cb-tag-warn
+   ============================================================ */
+
+.cb-tag {
+  /* Typography */
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+
+  /* Layout */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+
+  /* Surface */
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+}
+
+/* Accent tone */
+.cb-tag-accent {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+
+/* Good (green) tone */
+.cb-tag-good {
+  color: var(--good);
+  border-color: color-mix(in oklab, var(--good) 35%, transparent);
+}
+
+/* Hot (priority / alert) tone */
+.cb-tag-hot {
+  color: var(--hot);
+  border-color: color-mix(in oklab, var(--hot) 40%, transparent);
+  background: color-mix(in oklab, var(--hot) 10%, transparent);
+}
+
+/* Warn tone */
+.cb-tag-warn {
+  color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 35%, transparent);
+}
+
+/* ============================================================
+   D. PRICE BAR PRIMITIVES
+   cb-pbar, cb-pbar-fill, cb-pbar-fill--good, cb-pbar-fill--hot,
+   cb-pbar-base
+   ============================================================ */
+
+/* Track */
+.cb-pbar {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  background: rgba(120, 180, 215, 0.10);
+}
+
+/* Fill — default uses --good (a deal is by definition a saving).
+   The glow is a soft version of the fill color. */
+.cb-pbar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--good);
+  box-shadow: 0 0 calc(8px * var(--glow)) color-mix(in oklab, var(--good) 60%, transparent);
+  /* transition only on opacity/transform — no width transition (layout-affecting).
+     Width is set via inline style by the component; we leave it static here. */
+}
+
+/* Good tone — explicit green (same as default, allows caller to be semantic) */
+.cb-pbar-fill--good {
+  background: var(--good);
+  box-shadow: 0 0 calc(8px * var(--glow)) color-mix(in oklab, var(--good) 60%, transparent);
+}
+
+/* Hot tone — urgent / high-discount indicator */
+.cb-pbar-fill--hot {
+  background: var(--hot);
+  box-shadow: 0 0 calc(8px * var(--glow)) color-mix(in oklab, var(--hot) 55%, transparent);
+}
+
+/* Baseline tick — vertical hairline at the 100% mark */
+.cb-pbar-base {
+  position: absolute;
+  right: 0;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--text-dim);
+}
+
+/* ============================================================
+   E. STATUS PRIMITIVE
+   cb-status, cb-status-lbl
+   (cb-dot and cb-dot-* tones are in tokens.css — not redefined)
+   ============================================================ */
+
+.cb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cb-status-lbl {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+/* ============================================================
+   F. ICON PRIMITIVE
+   cb-ico — minimal wrapper; icon color comes from currentColor
+   ============================================================ */
+
+.cb-ico {
+  display: block;
+  flex: none;
+}
+
+/* ============================================================
+   G. DEAL FEED LAYOUT
+   .feed-list  — responsive card grid
+   .feed-cmd   — filter/command bar (minimal; views compose Panel+Btn)
+   .feed-empty — empty state
+   ============================================================ */
+
+/* Outer wrapper: stage-inner uses max-width + auto margin;
+   this grid fills it with responsive cards */
+.feed-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(372px, 1fr));
+  gap: var(--row);
+  align-items: start;
+}
+
+/* Filter/command bar above the grid */
+.feed-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.feed-cmd-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* Readout strip below the filter bar */
+.feed-readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  padding: 11px 16px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  margin-bottom: 16px;
+}
+
+.feed-readout b {
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* Separator dot in readout */
+.feed-dot {
+  color: var(--text-faint);
+}
+
+/* Empty state: spans the full grid width */
+.feed-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 80px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-dim);
+}
+
+.feed-empty p {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* ============================================================
+   H. DEAL CARD
+   .deal and ALL child classes:
+     .deal-top, .deal-id, .deal-set, .deal-disc, .deal-disc-num
+     .deal-pricing, .deal-price, .deal-base, .deal-save
+     .deal-meta, .deal-foot, .deal-seller
+   Plus:
+     .deal-seen, .deal-high, .deal-prio-rail
+   ============================================================ */
+
+/* Card shell — gradient background with hairline outline (outline
+   avoids border-box interference with chamfer when composed) */
+.deal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 16px 13px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+
+  /* Hover transition on outline + ambient glow only (no layout shift) */
+  transition: outline-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Subtle card hover — accent outline tint + faint ambient glow */
+@media (prefers-reduced-motion: no-preference) {
+  .deal:hover {
+    outline-color: color-mix(in oklab, var(--accent) 40%, transparent);
+    box-shadow: 0 0 calc(24px * var(--glow)) color-mix(in oklab, var(--accent) 9%, transparent);
+  }
+}
+
+/* Reduced-motion: keep outline color change but skip shadow animation */
+@media (prefers-reduced-motion: reduce) {
+  .deal:hover {
+    outline-color: color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+}
+
+/* Seen (dismissed) deal — dimmed; hover restores full opacity */
+.deal-seen {
+  opacity: 0.66;
+  transition: opacity 0.15s ease;
+}
+
+.deal-seen:hover {
+  opacity: 1;
+}
+
+/* High-priority deal — hot-tinted outline */
+.deal-high {
+  outline-color: color-mix(in oklab, var(--hot) 34%, transparent);
+}
+
+/* Priority rail — 2px left-edge accent bar for high-priority cards */
+.deal-prio-rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--hot);
+  box-shadow: 0 0 calc(10px * var(--glow)) var(--hot);
+}
+
+/* ---- Card top section: name+set (left) + discount% (right) ---- */
+.deal-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Identity column (card name + set line) */
+.deal-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;   /* allow text-overflow ellipsis */
+}
+
+/* Card name — primary text, display size */
+.deal-name {
+  font-family: var(--f-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Set / edition line */
+.deal-set {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Discount column (right side of deal-top) */
+.deal-disc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+  flex: none;
+}
+
+/* Large discount percentage figure (23px/700, good green with glow) */
+.deal-disc-num {
+  font-family: var(--f-mono);
+  font-size: 23px;
+  font-weight: 700;
+  color: var(--good);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 calc(14px * var(--glow)) color-mix(in oklab, var(--good) 45%, transparent);
+}
+
+/* ---- Pricing section: deal price + baseline + save line ---- */
+.deal-pricing {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* Price + baseline row */
+.deal-price-block {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+/* The deal price — large mono number */
+.deal-price {
+  font-family: var(--f-mono);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Struck-through baseline price */
+.deal-base {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  text-decoration: line-through;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Savings label ("save €N.NN") — pushed to the right */
+.deal-save {
+  font-size: 11px;
+  color: var(--good);
+  margin-left: auto;
+}
+
+/* ---- Meta tags row ---- */
+.deal-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ---- Footer: seller info (left) + action buttons (right) ---- */
+.deal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.deal-foot-left {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* Seller name / location — truncates gracefully */
+.deal-seller {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tags row inside the footer left slot */
+.deal-foot-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Age chip (small, faint) */
+.deal-age {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Action buttons cluster (buy + dismiss etc.) */
+.deal-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}

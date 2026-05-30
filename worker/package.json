@@ -13,12 +13,14 @@
     "hono": "latest"
   },
   "devDependencies": {
-    "wrangler": "latest",
     "@cloudflare/workers-types": "latest",
+    "@types/better-sqlite3": "^7.6.13",
+    "@typescript-eslint/eslint-plugin": "latest",
+    "@typescript-eslint/parser": "latest",
+    "better-sqlite3": "^12.10.0",
+    "eslint": "latest",
     "typescript": "latest",
     "vitest": "latest",
-    "eslint": "latest",
-    "@typescript-eslint/parser": "latest",
-    "@typescript-eslint/eslint-plugin": "latest"
+    "wrangler": "latest"
   }
 }

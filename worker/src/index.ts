@@ -2,6 +2,10 @@ import { Hono } from 'hono';
 import { runScan } from './scan/scanner';
 import { scanRouter } from './api/scan';
 import { telegramRouter } from './api/telegram';
+import { configRouter } from './api/config';
+import { watchlistRouter } from './api/watchlist';
+import { dealsRouter } from './api/deals';
+import { resolveRouter } from './api/resolve';
 
 // ─── Environment bindings ─────────────────────────────────────────────────────
 // DB        — Cloudflare D1 binding (name "DB" matches wrangler.toml [[d1_databases]])
@@ -56,22 +60,15 @@ app.route('/api/scan', scanRouter);
 // Telegram secrets are provisioned (notifier guards every send).
 app.route('/api/telegram', telegramRouter);
 
-// ── TODO — Phase 1+ routes (do not implement here) ───────────────────────────
-// Mount thin Hono sub-routers once their controllers exist in api/:
-//
-//   import { configRouter }    from './api/config';
-//   import { watchlistRouter } from './api/watchlist';
-//   import { dealsRouter }     from './api/deals';
-//   import { resolveRouter }   from './api/resolve';
-//
-//   app.route('/api/config',    configRouter);    // GET / PATCH
-//   app.route('/api/watchlist', watchlistRouter); // GET / POST / PATCH :id / DELETE :id / PATCH :id/reset
-//   app.route('/api/deals',     dealsRouter);     // GET ?status&min_discount&watchlist_id&priority
-//                                                 // PATCH :id / DELETE ?older_than_days
-//   app.route('/api/resolve',   resolveRouter);   // GET /expansions?q= / GET /blueprints?expansion_id&q=
-//
-// Rule: route handlers are thin controllers — validate input, delegate to repo.ts /
-// scanner / notifier, return snake_case JSON.  No business logic, no raw SQL here.
+// ── Phase 3 routes ────────────────────────────────────────────────────────────
+// GET / PATCH /api/config
+app.route('/api/config', configRouter);
+// GET / POST / PATCH :id / DELETE :id / PATCH :id/reset
+app.route('/api/watchlist', watchlistRouter);
+// GET ?status&min_discount&watchlist_id&priority / PATCH :id / DELETE ?older_than_days
+app.route('/api/deals', dealsRouter);
+// GET /expansions?q= / GET /blueprints?expansion_id=&q=
+app.route('/api/resolve', resolveRouter);
 
 // ── Catch-all 404 ─────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ error: 'not found' }, 404));

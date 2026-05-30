@@ -15,7 +15,16 @@
  * PRD §9 / §9a; docs/documentation/data-model.md; docs/documentation/scanner.md.
  */
 
-import type { WatchlistRow, ConfigRow, DealInsert, ScanCounts } from './types';
+import type {
+  WatchlistRow,
+  WatchlistInsert,
+  ConfigRow,
+  DealInsert,
+  DealRow,
+  ScanCounts,
+  ExpansionRow,
+  BlueprintRow,
+} from './types';
 
 // ---------------------------------------------------------------------------
 // Scan-runs lifecycle (PRD §11 steps 1 + 10)
@@ -257,4 +266,469 @@ export async function markTelegramSent(
     )
     .bind(productId)
     .run();
+}
+
+// ---------------------------------------------------------------------------
+// Config patch (Phase 3 — PATCH /api/config)
+// ---------------------------------------------------------------------------
+
+/**
+ * Patched columns that may be updated on the `config` row.
+ * `id` and `updated_at` are managed by this helper and are excluded.
+ */
+const CONFIG_PATCHABLE_COLS = new Set<string>([
+  'default_threshold_pct',
+  'default_min_condition',
+  'cohort_size',
+  'min_cohort',
+  'new_ticket_foil_pref',
+  'new_ticket_allow_graded',
+  'new_ticket_importance',
+  'new_ticket_telegram_enabled',
+  'telegram_min_discount_pct',
+  'quiet_hours_start',
+  'quiet_hours_end',
+  'digest_on_quiet_end',
+  'theme',
+  'accent_color',
+  'density',
+  'deal_retention_days',
+  'timezone',
+]);
+
+/**
+ * Partially update the single config row (`id = 1`).
+ *
+ * Builds a dynamic `UPDATE config SET col1=?, col2=?, ... updated_at=datetime('now')`
+ * from an allow-listed subset of ConfigRow keys.  Unknown keys are silently skipped.
+ * If no valid keys remain, the existing row is returned unchanged.
+ *
+ * Never inserts a second row — always targets `WHERE id = 1`.
+ */
+export async function patchConfig(
+  db: D1Database,
+  patch: Partial<ConfigRow>,
+): Promise<ConfigRow> {
+  const entries = Object.entries(patch).filter(([k]) => CONFIG_PATCHABLE_COLS.has(k));
+
+  if (entries.length === 0) {
+    return getConfig(db);
+  }
+
+  const setClauses = entries.map(([col]) => `${col} = ?`).join(', ');
+  const values = entries.map(([, v]) => v);
+
+  await db
+    .prepare(
+      `UPDATE config
+          SET ${setClauses}, updated_at = datetime('now')
+        WHERE id = 1`,
+    )
+    .bind(...values)
+    .run();
+
+  return getConfig(db);
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist CRUD (Phase 3 — /api/watchlist)
+// ---------------------------------------------------------------------------
+
+/**
+ * Columns on `watchlist` that may be updated via PATCH.
+ * Excludes `id`, `created_at`, and `updated_at` (managed by the repo).
+ */
+const WATCHLIST_PATCHABLE_COLS = new Set<string>([
+  'type',
+  'cardtrader_id',
+  'label',
+  'game_id',
+  'min_condition',
+  'foil_pref',
+  'allow_graded',
+  'threshold_pct',
+  'importance',
+  'telegram_enabled',
+  'telegram_min_discount_pct',
+  'telegram_max_price_cents',
+  'telegram_min_savings_cents',
+  'active',
+]);
+
+/**
+ * The two §9a override columns that `:id/reset` is permitted to null out.
+ * `telegram_max_price_cents` and `telegram_min_savings_cents` are intentionally
+ * excluded — they have no config fallback and resetting them to NULL would be
+ * ambiguous (NULL already means "no cap / no floor", not "inherit").
+ */
+const WATCHLIST_RESETTABLE_COLS = new Set<string>([
+  'threshold_pct',
+  'telegram_min_discount_pct',
+]);
+
+/**
+ * Read a single watchlist row by primary key.
+ * Returns null if no row with that id exists.
+ */
+export async function getWatchlistById(
+  db: D1Database,
+  id: number,
+): Promise<WatchlistRow | null> {
+  return db
+    .prepare(
+      `SELECT id, type, cardtrader_id, label, game_id, min_condition,
+              foil_pref, allow_graded, threshold_pct, importance,
+              telegram_enabled, telegram_min_discount_pct,
+              telegram_max_price_cents, telegram_min_savings_cents,
+              active, created_at, updated_at
+         FROM watchlist
+        WHERE id = ?`,
+    )
+    .bind(id)
+    .first<WatchlistRow>();
+}
+
+/**
+ * List ALL watchlist rows (active and inactive), ordered by id.
+ *
+ * Distinct from `listActiveWatchlist` (scanner use) — this is for the
+ * dashboard's full watchlist view (PRD §10 GET /api/watchlist).
+ */
+export async function listWatchlist(db: D1Database): Promise<WatchlistRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, type, cardtrader_id, label, game_id, min_condition,
+              foil_pref, allow_graded, threshold_pct, importance,
+              telegram_enabled, telegram_min_discount_pct,
+              telegram_max_price_cents, telegram_min_savings_cents,
+              active, created_at, updated_at
+         FROM watchlist
+        ORDER BY id ASC`,
+    )
+    .all<WatchlistRow>();
+
+  return results;
+}
+
+/**
+ * Insert a new watchlist row.
+ *
+ * Only binds columns that are present in `row`; absent optional columns are
+ * omitted from the INSERT so the DB defaults apply.  §9a override columns not
+ * supplied default to NULL (born inheriting).
+ *
+ * Returns the freshly-inserted row via `getWatchlistById` keyed on the
+ * `last_row_id` from the run result.
+ */
+export async function insertWatchlist(
+  db: D1Database,
+  row: WatchlistInsert,
+): Promise<WatchlistRow> {
+  // Build the column list and values from what is explicitly present.
+  // Required columns come first, then each optional column only when provided.
+  type ColVal = [string, unknown];
+  const colVals: ColVal[] = [
+    ['type', row.type],
+    ['cardtrader_id', row.cardtrader_id],
+    ['label', row.label],
+  ];
+
+  if (row.game_id !== undefined)           { colVals.push(['game_id', row.game_id]); }
+  if (row.min_condition !== undefined)     { colVals.push(['min_condition', row.min_condition]); }
+  if (row.foil_pref !== undefined)         { colVals.push(['foil_pref', row.foil_pref]); }
+  if (row.allow_graded !== undefined)      { colVals.push(['allow_graded', row.allow_graded]); }
+  if (row.importance !== undefined)        { colVals.push(['importance', row.importance]); }
+  if (row.telegram_enabled !== undefined)  { colVals.push(['telegram_enabled', row.telegram_enabled]); }
+  if (row.active !== undefined)            { colVals.push(['active', row.active]); }
+  // §9a nullable overrides — only bind when callers explicitly supply them
+  // (routes should leave these absent so new items are born inheriting)
+  if (row.threshold_pct !== undefined)              { colVals.push(['threshold_pct', row.threshold_pct]); }
+  if (row.telegram_min_discount_pct !== undefined)  { colVals.push(['telegram_min_discount_pct', row.telegram_min_discount_pct]); }
+  if (row.telegram_max_price_cents !== undefined)   { colVals.push(['telegram_max_price_cents', row.telegram_max_price_cents]); }
+  if (row.telegram_min_savings_cents !== undefined) { colVals.push(['telegram_min_savings_cents', row.telegram_min_savings_cents]); }
+
+  const cols = colVals.map(([c]) => c).join(', ');
+  const placeholders = colVals.map(() => '?').join(', ');
+  const values = colVals.map(([, v]) => v);
+
+  const res = await db
+    .prepare(`INSERT INTO watchlist (${cols}) VALUES (${placeholders})`)
+    .bind(...values)
+    .run();
+
+  const newId = res.meta.last_row_id;
+  if (typeof newId !== 'number' || newId <= 0) {
+    throw new Error('insertWatchlist: failed to obtain a valid rowid after INSERT');
+  }
+
+  const inserted = await getWatchlistById(db, newId);
+  if (inserted === null) {
+    throw new Error('insertWatchlist: row not found after INSERT');
+  }
+  return inserted;
+}
+
+/**
+ * Partially update a watchlist row.
+ *
+ * Builds a dynamic SET from the allow-listed patchable columns.  Unknown keys
+ * are silently skipped.  If no valid keys remain, returns the existing row
+ * unchanged (or null if the id does not exist).
+ *
+ * The `patch` parameter uses `Record<string, unknown>` so the route layer can
+ * pass the raw parsed JSON body — this function does the allow-listing.
+ */
+export async function patchWatchlist(
+  db: D1Database,
+  id: number,
+  patch: Record<string, unknown>,
+): Promise<WatchlistRow | null> {
+  const entries = Object.entries(patch).filter(([k]) => WATCHLIST_PATCHABLE_COLS.has(k));
+
+  if (entries.length === 0) {
+    return getWatchlistById(db, id);
+  }
+
+  const setClauses = entries.map(([col]) => `${col} = ?`).join(', ');
+  const values = [...entries.map(([, v]) => v), id];
+
+  await db
+    .prepare(
+      `UPDATE watchlist
+          SET ${setClauses}, updated_at = datetime('now')
+        WHERE id = ?`,
+    )
+    .bind(...values)
+    .run();
+
+  return getWatchlistById(db, id);
+}
+
+/**
+ * Hard-delete a watchlist row and its associated deals.
+ *
+ * D1 does not reliably enforce `ON DELETE CASCADE` without `PRAGMA foreign_keys`
+ * (which is unreliable in D1).  This function issues a safe batch that explicitly
+ * deletes child deals first, then the watchlist row, atomically.
+ *
+ * Returns `true` if the watchlist row existed (was deleted); `false` if not found.
+ */
+export async function deleteWatchlist(
+  db: D1Database,
+  id: number,
+): Promise<boolean> {
+  const [, watchlistResult] = await db.batch([
+    db.prepare(`DELETE FROM deals WHERE watchlist_id = ?`).bind(id),
+    db.prepare(`DELETE FROM watchlist WHERE id = ?`).bind(id),
+  ]);
+
+  return (watchlistResult.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Null out a §9a override column to reset a watchlist item back to inheriting.
+ *
+ * Only `threshold_pct` and `telegram_min_discount_pct` may be reset — these are
+ * the two columns that fall back to a `config` default (§9a).  Any other field
+ * name throws `Error('invalid_field')`, which the route maps to 400.
+ *
+ * Returns the updated row, or null if the id does not exist.
+ */
+export async function resetWatchlistField(
+  db: D1Database,
+  id: number,
+  field: string,
+): Promise<WatchlistRow | null> {
+  if (!WATCHLIST_RESETTABLE_COLS.has(field)) {
+    throw new Error('invalid_field');
+  }
+
+  await db
+    .prepare(
+      `UPDATE watchlist
+          SET ${field} = NULL, updated_at = datetime('now')
+        WHERE id = ?`,
+    )
+    .bind(id)
+    .run();
+
+  return getWatchlistById(db, id);
+}
+
+// ---------------------------------------------------------------------------
+// Deals read / patch / prune (Phase 3 — /api/deals)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a single deal row by primary key.
+ * Returns null if no row with that id exists.
+ */
+export async function getDealById(
+  db: D1Database,
+  id: number,
+): Promise<DealRow | null> {
+  return db
+    .prepare(`SELECT * FROM deals WHERE id = ?`)
+    .bind(id)
+    .first<DealRow>();
+}
+
+/**
+ * List deal rows with optional filters.
+ *
+ * Filters:
+ *  - `status`: `'open'` (default, `dismissed = 0`) or `'all'` (no filter).
+ *  - `min_discount`: only rows with `discount_pct >= ?`.
+ *  - `watchlist_id`: only rows for this watchlist item.
+ *  - `priority`: only rows with this priority value.
+ *
+ * Results are ordered by `found_at DESC` (newest first).
+ */
+export async function listDeals(
+  db: D1Database,
+  f: {
+    status?: 'open' | 'all';
+    min_discount?: number;
+    watchlist_id?: number;
+    priority?: string;
+  },
+): Promise<DealRow[]> {
+  let sql = `SELECT * FROM deals WHERE 1=1`;
+  const binds: unknown[] = [];
+
+  // Default to 'open' — omit dismissed rows unless caller explicitly asks for all.
+  if ((f.status ?? 'open') === 'open') {
+    sql += ` AND dismissed = 0`;
+  }
+  if (f.min_discount !== undefined) {
+    sql += ` AND discount_pct >= ?`;
+    binds.push(f.min_discount);
+  }
+  if (f.watchlist_id !== undefined) {
+    sql += ` AND watchlist_id = ?`;
+    binds.push(f.watchlist_id);
+  }
+  if (f.priority !== undefined) {
+    sql += ` AND priority = ?`;
+    binds.push(f.priority);
+  }
+
+  sql += ` ORDER BY found_at DESC`;
+
+  const { results } = await db
+    .prepare(sql)
+    .bind(...binds)
+    .all<DealRow>();
+
+  return results;
+}
+
+/**
+ * Partially update a deal's `seen` and/or `dismissed` flags.
+ *
+ * Converts JS booleans to 0/1 before binding.  Skips absent fields.
+ * If neither field is provided, returns the existing row unchanged (or null
+ * if not found).
+ *
+ * Returns the updated row, or null if no row exists for the given id.
+ */
+export async function patchDeal(
+  db: D1Database,
+  id: number,
+  patch: { seen?: boolean; dismissed?: boolean },
+): Promise<DealRow | null> {
+  type ColVal = [string, 0 | 1];
+  const colVals: ColVal[] = [];
+
+  if (patch.seen !== undefined)      { colVals.push(['seen', patch.seen ? 1 : 0]); }
+  if (patch.dismissed !== undefined) { colVals.push(['dismissed', patch.dismissed ? 1 : 0]); }
+
+  if (colVals.length === 0) {
+    return getDealById(db, id);
+  }
+
+  const setClauses = colVals.map(([col]) => `${col} = ?`).join(', ');
+  const values = [...colVals.map(([, v]) => v), id];
+
+  await db
+    .prepare(`UPDATE deals SET ${setClauses} WHERE id = ?`)
+    .bind(...values)
+    .run();
+
+  return getDealById(db, id);
+}
+
+/**
+ * Delete deal rows older than `olderThanDays` days.
+ *
+ * Uses a bound parameter for the `datetime` modifier so the days value is never
+ * interpolated into the SQL text.
+ *
+ * Returns the count of deleted rows (`meta.changes`).
+ */
+export async function pruneDeals(
+  db: D1Database,
+  olderThanDays: number,
+): Promise<number> {
+  const modifier = `-${olderThanDays} days`;
+  const res = await db
+    .prepare(
+      `DELETE FROM deals WHERE found_at < datetime('now', ?)`,
+    )
+    .bind(modifier)
+    .run();
+
+  return res.meta.changes ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Cache search helpers (Phase 3 — /api/resolve)
+// ---------------------------------------------------------------------------
+
+/**
+ * Search cached expansions by name or code (case-insensitive partial match).
+ * Returns up to 50 results ordered by name.
+ */
+export async function searchExpansions(
+  db: D1Database,
+  q: string,
+): Promise<ExpansionRow[]> {
+  const like = `%${q}%`;
+  const { results } = await db
+    .prepare(
+      `SELECT id, game_id, code, name
+         FROM expansions
+        WHERE name LIKE ? OR code LIKE ?
+        ORDER BY name
+        LIMIT 50`,
+    )
+    .bind(like, like)
+    .all<ExpansionRow>();
+
+  return results;
+}
+
+/**
+ * Search cached blueprints within a specific expansion by name
+ * (case-insensitive partial match).
+ * Returns up to 50 results ordered by name.
+ */
+export async function searchBlueprints(
+  db: D1Database,
+  expansionId: number,
+  q: string,
+): Promise<BlueprintRow[]> {
+  const like = `%${q}%`;
+  const { results } = await db
+    .prepare(
+      `SELECT id, expansion_id, name, image_url
+         FROM blueprints
+        WHERE expansion_id = ? AND name LIKE ?
+        ORDER BY name
+        LIMIT 50`,
+    )
+    .bind(expansionId, like)
+    .all<BlueprintRow>();
+
+  return results;
 }

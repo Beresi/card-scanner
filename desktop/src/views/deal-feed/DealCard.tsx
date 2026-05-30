@@ -1,0 +1,156 @@
+/**
+ * DealCard — presentational card for one Deal row.
+ *
+ * Purely presentational: no data fetching, no state. The parent
+ * DealFeed passes callbacks for every action.
+ *
+ * CSS classes used: all defined in styles/components.css section H.
+ */
+
+import { invoke } from '@tauri-apps/api/core';
+
+import { Btn } from '../../components/Btn';
+import { Icon } from '../../components/Icon';
+import { PriceBar } from '../../components/PriceBar';
+import { Tag } from '../../components/Tag';
+import type { Deal } from '../../api/types';
+import { ago, flag, pct, savings, usd } from '../../lib/format';
+
+export interface DealCardProps {
+  deal: Deal;
+  onSeen: (id: number) => void;
+  onDismiss: (id: number) => void;
+  onBuy: (deal: Deal) => void;
+  busy?: boolean;
+}
+
+// Map card condition to a Tag tone — NM/LP are "good", degraded conditions default.
+function conditionTone(condition: string | null): 'good' | 'default' {
+  if (condition === 'NM' || condition === 'LP') return 'good';
+  return 'default';
+}
+
+export function DealCard({ deal, onSeen, onDismiss, onBuy, busy = false }: DealCardProps) {
+  const isHigh = deal.priority === 'high';
+  const isSeen = deal.seen === 1;
+
+  const rootClass = [
+    'deal',
+    isSeen ? 'deal-seen' : undefined,
+    isHigh ? 'deal-high' : undefined,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const savingsCents = savings(deal.baseline_cents, deal.price_cents);
+
+  return (
+    <article className={rootClass}>
+      {/* High-priority left rail accent bar */}
+      {isHigh && <div className="deal-prio-rail" aria-hidden="true" />}
+
+      {/* Top: card name + set  |  discount % */}
+      <div className="deal-top">
+        <div className="deal-id">
+          <span className="deal-name">{deal.card_name}</span>
+          <span className="deal-set cb-mono">{deal.expansion_name ?? '—'}</span>
+        </div>
+        <div className="deal-disc">
+          <span className="deal-disc-num">−{pct(deal.discount_pct)}</span>
+          <span className="cb-eyebrow" style={{ fontSize: 10 }}>under med</span>
+        </div>
+      </div>
+
+      {/* Pricing: price, baseline, savings, bar */}
+      <div className="deal-pricing">
+        <div className="deal-price-block">
+          <span className="deal-price">{usd(deal.price_cents, deal.currency)}</span>
+          <span className="deal-base">vs {usd(deal.baseline_cents, deal.currency)}</span>
+          <span className="deal-save cb-text-good">
+            save {usd(savingsCents, deal.currency)}
+          </span>
+        </div>
+        <PriceBar
+          value={deal.discount_pct}
+          max={100}
+          tone={isHigh ? 'hot' : 'good'}
+          title={`${pct(deal.discount_pct)} below median cohort price`}
+        />
+      </div>
+
+      {/* Meta tags: condition, foil, language, quantity */}
+      <div className="deal-meta">
+        <Tag tone={conditionTone(deal.condition)} title="Condition">
+          {deal.condition ?? '?'}
+        </Tag>
+        {deal.foil !== null && (
+          <Tag tone={deal.foil === 1 ? 'accent' : 'default'} title="Foil">
+            {deal.foil === 1 ? 'FOIL' : 'NONFOIL'}
+          </Tag>
+        )}
+        <Tag title="Language">{deal.language ?? '—'}</Tag>
+        {deal.quantity !== null && (
+          <Tag title="Quantity available">q{deal.quantity}</Tag>
+        )}
+      </div>
+
+      {/* Footer: seller info | action buttons */}
+      <div className="deal-foot">
+        <div className="deal-foot-left">
+          <span className="deal-seller">
+            {flag(deal.seller_country)}{flag(deal.seller_country) ? ' ' : ''}
+            {deal.seller_username ?? 'unknown'}
+          </span>
+          <span className="deal-age">{ago(deal.found_at)}</span>
+        </div>
+
+        <div className="deal-actions">
+          <Btn
+            variant="primary"
+            onClick={() => onBuy(deal)}
+            disabled={!deal.buy_url}
+            title={deal.buy_url ? 'Open on CardTrader' : 'No buy link available'}
+            aria-label={`Buy ${deal.card_name}`}
+          >
+            <Icon name="buy" size={14} />
+            Buy
+          </Btn>
+          <Btn
+            variant="ghost"
+            onClick={() => onSeen(deal.id)}
+            disabled={isSeen || busy}
+            title="Mark as seen"
+            aria-label="Mark seen"
+          >
+            <Icon name="eye" size={14} />
+            Seen
+          </Btn>
+          <Btn
+            variant="ghost"
+            onClick={() => onDismiss(deal.id)}
+            disabled={busy}
+            title="Dismiss deal"
+            aria-label="Dismiss deal"
+          >
+            <Icon name="x" size={14} />
+            Dismiss
+          </Btn>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/**
+ * openBuyUrl — opens deal.buy_url in the system browser via the Tauri
+ * open_buy_url command. Falls back to window.open when running in a
+ * plain browser (npm run dev without the Tauri host).
+ */
+export async function openBuyUrl(url: string): Promise<void> {
+  try {
+    await invoke('open_buy_url', { url });
+  } catch {
+    // Tauri host not available (plain browser dev session) — fall back.
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}

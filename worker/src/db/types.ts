@@ -193,3 +193,109 @@ export interface DealInsert {
   priority: Importance;
   buy_url: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Deal row (read shape from the `deals` table)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every column in the `deals` table, typed as D1 returns them.
+ *
+ * Boolean columns (`foil`, `can_sell_via_hub`, `seen`, `dismissed`,
+ * `telegram_sent`) are stored as `0 | 1`; nullable columns carry `| null`.
+ * Money is integer cents.  Timestamps are UTC strings.
+ */
+export interface DealRow {
+  id: number;
+  watchlist_id: number;
+  blueprint_id: number;
+  product_id: number;
+  card_name: string;
+  expansion_name: string | null;
+  seller_username: string | null;
+  seller_country: string | null;
+  condition: string | null;
+  language: string | null;
+  foil: 0 | 1 | null;
+  can_sell_via_hub: 0 | 1 | null;
+  quantity: number | null;
+  price_cents: number;
+  currency: string;
+  baseline_cents: number;
+  cohort_size: number;
+  discount_pct: number;
+  priority: Importance;
+  buy_url: string | null;
+  found_at: string;            // UTC TEXT
+  seen: 0 | 1;
+  dismissed: 0 | 1;
+  telegram_sent: 0 | 1;
+  telegram_sent_at: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist insert shape
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape for inserting a new watchlist row.
+ *
+ * Required: the three identifying columns that the route must supply.
+ * Optional: columns that have NOT NULL DEFAULT values in the schema — the SQL
+ *   INSERT omits absent ones so the DB defaults apply (born inheriting §9a).
+ * The four nullable §9a override / no-fallback columns default to NULL;
+ *   new items are born inheriting.
+ *
+ * Boolean columns use `0 | 1` to match the row convention; the route layer
+ * converts real JS booleans to 0/1 before constructing this type.
+ */
+export interface WatchlistInsert {
+  // Required
+  type: 'blueprint' | 'expansion';
+  cardtrader_id: number;
+  label: string;
+
+  // Optional — schema provides NOT NULL DEFAULT values
+  game_id?: number;
+  min_condition?: string;
+  foil_pref?: FoilPref;
+  allow_graded?: 0 | 1;
+  importance?: Importance;
+  telegram_enabled?: 0 | 1;
+  active?: 0 | 1;
+
+  // §9a nullable override columns — NULL → inherit config at scan time
+  threshold_pct?: number | null;
+  telegram_min_discount_pct?: number | null;
+
+  // No-fallback nullable columns — NULL → no cap / no floor
+  telegram_max_price_cents?: number | null;
+  telegram_min_savings_cents?: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Cache row shapes (expansions + blueprints tables)
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape for the `expansions` cache table.
+ * Used by `searchExpansions` and the add-card UX.
+ */
+export interface ExpansionRow {
+  id: number;
+  game_id: number;
+  code: string | null;
+  name: string | null;
+  synced_at: string;
+}
+
+/**
+ * Row shape for the `blueprints` cache table.
+ * Used by `searchBlueprints` and the add-card UX.
+ */
+export interface BlueprintRow {
+  id: number;
+  expansion_id: number | null;
+  name: string | null;
+  image_url: string | null;
+}
