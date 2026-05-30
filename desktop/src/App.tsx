@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useDeals, useRunScan } from './api/hooks';
+import { useConfig, useDeals, useHealth, useRunScan } from './api/hooks';
 import { BrandGlyph } from './components/BrandGlyph';
 import { Clock } from './components/Clock';
 import { Icon } from './components/Icon';
@@ -107,6 +107,12 @@ function ActiveView({ view, onReplayBoot, onClearDeals }: ActiveViewProps) {
 export function App() {
   // ---- Apply saved appearance (theme/palette/font/density/accent) to the DOM ----
   useApplyAppearance();
+
+  // ---- Scan mode (for topstrip / rail-foot labels) — cached by useApplyAppearance's
+  //      useConfig() call; no extra network request. ----
+  const { data: health } = useHealth();
+  const { data: config } = useConfig();
+  const isChunked = (health?.scan_mode ?? config?.scan_mode ?? 'chunked') === 'chunked';
 
   // ---- View navigation ----
   const [view, setView] = useState<ViewKey>('feed');
@@ -291,8 +297,17 @@ export function App() {
                 <Status tone="good" label="SCANNER ONLINE" />
               </div>
               <div className="rail-sys-row">
-                <span className="cb-eyebrow">next scan</span>
-                <Clock target={nextScanTarget} className="cb-mono cb-text-accent" />
+                {isChunked ? (
+                  <>
+                    <span className="cb-eyebrow">scanner</span>
+                    <span className="cb-mono cb-text-accent">rotating</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="cb-eyebrow">next scan</span>
+                    <Clock target={nextScanTarget} className="cb-mono cb-text-accent" />
+                  </>
+                )}
               </div>
               <div className="rail-sys-row">
                 <span className="cb-eyebrow">currency</span>
@@ -322,8 +337,17 @@ export function App() {
               </button>
               <span className="topstrip-div" aria-hidden="true" />
               <div className="topstrip-clock">
-                <span className="cb-eyebrow">next scan</span>
-                <Clock target={nextScanTarget} className="cb-mono cb-text-accent" />
+                {isChunked ? (
+                  <>
+                    <span className="cb-eyebrow">scanner</span>
+                    <span className="cb-mono cb-text-accent">·live·</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="cb-eyebrow">next scan</span>
+                    <Clock target={nextScanTarget} className="cb-mono cb-text-accent" />
+                  </>
+                )}
               </div>
               <span className="topstrip-div" aria-hidden="true" />
               <Status tone="good" label="API 200" />

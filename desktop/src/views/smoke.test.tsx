@@ -149,18 +149,22 @@ describe('View render-smoke', () => {
     ).toBeInTheDocument();
   });
 
-  it('Telemetry mounts and shows "next scan"', async () => {
-    // Telemetry uses useDeals + useScanRuns; both resolve to empty arrays here.
+  it('Telemetry mounts and shows the scan section landmark', async () => {
+    // Telemetry uses useDeals + useScanRuns + useHealth + useConfig.
     mockGetDeals.mockResolvedValue([]);
     mockGetScanRuns.mockResolvedValue([]);
+    mockGetHealth.mockResolvedValue(FIXTURE_HEALTH);   // scan_mode: 'chunked'
+    mockGetConfig.mockResolvedValue(FIXTURE_CONFIG);
 
     const fixedTarget = new Date('2026-06-01T12:00:00Z').getTime();
 
     renderWithProviders(<Telemetry scanTarget={fixedTarget} />);
 
-    // "next scan" label is in the SCAN section (renders immediately; no loading guard).
-    const labels = await screen.findAllByText('next scan');
-    expect(labels.length).toBeGreaterThanOrEqual(1);
+    // In chunked mode the scan block shows "scanning this cycle" instead of "next scan".
+    // The "Scan now" button is always present regardless of mode.
+    expect(await screen.findByRole('button', { name: /scan now/i })).toBeInTheDocument();
+    // Chunked-mode label should be visible once health resolves.
+    expect(await screen.findByText('scanning this cycle')).toBeInTheDocument();
   });
 
 });

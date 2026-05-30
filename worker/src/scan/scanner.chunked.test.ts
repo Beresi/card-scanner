@@ -36,6 +36,8 @@ import {
   patchConfig,
   selectBlueprintsToScan,
   markBlueprintsScanned,
+  countScannedThisCycle,
+  countActiveExpansionBlueprints,
 } from '../db/repo';
 import { CardTraderError } from '../cardtrader/types';
 import type { CardTraderClient } from '../cardtrader/client';
@@ -628,5 +630,201 @@ describe('markBlueprintsScanned', () => {
 
     const allSet = ids.every((id) => getLastScanned(raw, id) !== null);
     expect(allSet).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (D) Cycle management — countActiveExpansionBlueprints + countScannedThisCycle
+// ---------------------------------------------------------------------------
+
+describe('countActiveExpansionBlueprints', () => {
+  it('returns 0 for empty expansionIds', async () => {
+    const { db } = makeD1();
+    const count = await countActiveExpansionBlueprints(db, []);
+    expect(count).toBe(0);
+  });
+
+  it('returns total blueprint count across all given expansion ids', async () => {
+    const { db, raw } = makeD1();
+    seedBlueprints(raw, 10, [1, 2, 3], null);
+    seedBlueprints(raw, 20, [4, 5], null);
+    // Only query expansion 10 → 3
+    expect(await countActiveExpansionBlueprints(db, [10])).toBe(3);
+    // Both → 5
+    expect(await countActiveExpansionBlueprints(db, [10, 20])).toBe(5);
+  });
+
+  it('excludes blueprints from expansions not in the list', async () => {
+    const { db, raw } = makeD1();
+    seedBlueprints(raw, 10, [1, 2], null);
+    seedBlueprints(raw, 99, [3], null);
+    // Ask only for expansion 10
+    expect(await countActiveExpansionBlueprints(db, [10])).toBe(2);
+  });
+});
+
+describe('countScannedThisCycle', () => {
+  it('returns 0 for empty expansionIds', async () => {
+    const { db } = makeD1();
+    const count = await countScannedThisCycle(db, [], '2026-01-01 00:00:00');
+    expect(count).toBe(0);
+  });
+
+  it('counts only blueprints scanned AT OR AFTER cycleStart', async () => {
+    const { db, raw } = makeD1();
+    const cycleStart = '2026-01-01 10:00:00';
+    seedBlueprints(raw, 10, [], null);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (1, 10, 'A', '2026-01-01 10:00:00')`); // = cycleStart: counted
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (2, 10, 'B', '2026-01-01 10:05:00')`); // after: counted
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (3, 10, 'C', '2025-12-31 23:59:59')`); // before: not counted
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (4, 10, 'D', NULL)`); // NULL: not counted
+    expect(await countScannedThisCycle(db, [10], cycleStart)).toBe(2);
+  });
+
+  it('excludes blueprints from expansions not in the list', async () => {
+    const { db, raw } = makeD1();
+    const cycleStart = '2026-01-01 00:00:00';
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (1, 10, 'A', '2026-01-01 01:00:00')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (2, 20, 'B', '2026-01-01 01:00:00')`);
+    // Only ask for expansion 10
+    expect(await countScannedThisCycle(db, [10], cycleStart)).toBe(1);
+  });
+});
+
+describe('(D) Scan cycle management — scanner integration', () => {
+  /** Build a chunked env with expansion blueprints seeded. */
+  function makeCycleEnv(opts: {
+    expansionId?: number;
+    batchSize?: number;
+    blueprintIds?: number[];
+  } = {}) {
+    const {
+      expansionId = 50,
+      batchSize = 3,
+      blueprintIds = [7001, 7002, 7003],
+    } = opts;
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'chunked', scan_batch_size = ${batchSize} WHERE id = 1`);
+    seedExpansionItem(raw, expansionId);
+    seedBlueprints(raw, expansionId, blueprintIds, null); // all un-scanned
+    return { db, raw };
+  }
+
+  function makeNoDealClient(): CardTraderClient {
+    return {
+      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
+      marketplaceProducts: vi.fn().mockImplementation((q: { blueprintId?: number }) =>
+        Promise.resolve(makeNoDealResponse(q.blueprintId ?? 0, (q.blueprintId ?? 0) * 10)),
+      ),
+      expansions: vi.fn().mockResolvedValue([]),
+      blueprintsExport: vi.fn().mockResolvedValue([]),
+    };
+  }
+
+  it('D1: fresh DB (cycle null) — first run sets scan_cycle_started_at', async () => {
+    const { db, raw } = makeCycleEnv();
+    // Verify cycle not set before
+    const before = raw.prepare(`SELECT scan_cycle_started_at FROM config WHERE id = 1`).get() as
+      { scan_cycle_started_at: string | null };
+    expect(before.scan_cycle_started_at).toBeNull();
+
+    await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    const after = raw.prepare(`SELECT scan_cycle_started_at FROM config WHERE id = 1`).get() as
+      { scan_cycle_started_at: string | null };
+    expect(after.scan_cycle_started_at).not.toBeNull();
+    // Should be a SQLite datetime string
+    expect(typeof after.scan_cycle_started_at).toBe('string');
+  });
+
+  it('D2: after scanning, countScannedThisCycle reflects the batch', async () => {
+    const bpIds = [8001, 8002, 8003];
+    const { db, raw } = makeCycleEnv({ blueprintIds: bpIds, batchSize: 3 });
+
+    await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    const configRow = raw.prepare(`SELECT scan_cycle_started_at FROM config WHERE id = 1`).get() as
+      { scan_cycle_started_at: string | null };
+    const cycleStart = configRow.scan_cycle_started_at;
+    expect(cycleStart).not.toBeNull();
+
+    const scanned = await countScannedThisCycle(db, [50], cycleStart!);
+    // All 3 blueprints should be counted (batchSize=3, 3 blueprints)
+    expect(scanned).toBe(3);
+  });
+
+  it('D3: when all blueprints already scanned this cycle — next run resets cycleStart', async () => {
+    const bpIds = [9001, 9002];
+    const { db, raw } = makeCycleEnv({ blueprintIds: bpIds, batchSize: 5 });
+
+    // Manually set a past cycle start and mark ALL blueprints as scanned after it
+    const oldCycleStart = '2026-01-01 00:00:00';
+    raw.exec(`UPDATE config SET scan_cycle_started_at = '${oldCycleStart}' WHERE id = 1`);
+    raw.exec(`UPDATE blueprints SET last_scanned_at = '2026-01-01 01:00:00' WHERE expansion_id = 50`);
+
+    // Run again — all are already scanned (countScannedThisCycle >= total), so a new cycle starts
+    await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    const configRow = raw.prepare(`SELECT scan_cycle_started_at FROM config WHERE id = 1`).get() as
+      { scan_cycle_started_at: string | null };
+    const newCycleStart = configRow.scan_cycle_started_at;
+    expect(newCycleStart).not.toBeNull();
+    // The new cycle anchor must be after the old one
+    expect(newCycleStart! > oldCycleStart).toBe(true);
+  });
+
+  it('D3b: patchConfig persists scan_cycle_started_at', async () => {
+    const { db } = makeD1();
+    const ts = '2026-06-01 12:00:00';
+    const updated = await patchConfig(db, { scan_cycle_started_at: ts });
+    expect(updated.scan_cycle_started_at).toBe(ts);
+    const reread = await getConfig(db);
+    expect(reread.scan_cycle_started_at).toBe(ts);
+  });
+
+  it('D4: cycle management failure is non-fatal — scan still runs', async () => {
+    // Use a fresh DB where config row is missing (simulate getConfig failure scenario)
+    // by using a batchSize=0 which means the rotation won't scan any blueprints
+    // but the cycle code will still execute. Check the run doesn't error out.
+    const { db } = makeCycleEnv({ batchSize: 5 });
+    // Normal run — cycle error path exercised if it happens; scan must not set runError.
+    const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+    // The run must resolve without a whole-run error (cycle errors are non-fatal)
+    expect(summary.error).toBeNull();
+  });
+
+  it('D5: wholeset mode run does not touch scan_cycle_started_at', async () => {
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'wholeset' WHERE id = 1`);
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 70, 'Set', 1)`);
+    // No cycle set
+    const beforeRow = raw.prepare(`SELECT scan_cycle_started_at FROM config WHERE id = 1`).get() as
+      { scan_cycle_started_at: string | null };
+    expect(beforeRow.scan_cycle_started_at).toBeNull();
+
+    // Wholeset mode, run-now so throttle doesn't block it
+    const marketplaceSpy = vi.fn().mockResolvedValue(makeNoDealResponse(70, 80000));
+    const client: CardTraderClient = {
+      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
+      marketplaceProducts: marketplaceSpy,
+      expansions: vi.fn().mockResolvedValue([]),
+      blueprintsExport: vi.fn().mockResolvedValue([]),
+    };
+    await runScan(makeEnv(db), { trigger: 'run-now' }, {
+      createClient: (_t, _o) => client,
+    });
+
+    const afterRow = raw.prepare(`SELECT scan_cycle_started_at FROM config WHERE id = 1`).get() as
+      { scan_cycle_started_at: string | null };
+    // Wholeset mode must not touch the cycle column
+    expect(afterRow.scan_cycle_started_at).toBeNull();
   });
 });

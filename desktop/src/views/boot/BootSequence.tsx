@@ -47,7 +47,7 @@ const BOOT_LINES: BootLine[] = [
   { text: '> expansion cache ........................... 412 SETS',         delay: 220 },
   { text: '> blueprint cache ....................... 38,114 CARDS',         delay: 240 },
   { text: '> telegram bot · @cardbroker_bot · getMe ......... LINKED',      delay: 320 },
-  { text: '> cron · 0 * * * * · next scan T-53:12 ............. ARMED',    delay: 300 },
+  { text: '> cron · */2 * * * * · chunked rotation ........... ARMED',     delay: 300 },
   { text: '> scanner online.',                        cls: 'boot-ok',      delay: 420 },
 ];
 

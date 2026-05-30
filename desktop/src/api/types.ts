@@ -137,6 +137,10 @@ export interface Health {
   deals_found: number | null;
   telegram_sent: number | null;
   api_calls: number | null;
+  // Chunked-scan progress (added with chunked-rotation backend)
+  scan_mode: ScanMode;
+  scan_total: number;
+  scan_done: number;
 }
 
 // ---------------------------------------------------------------------------

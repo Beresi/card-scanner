@@ -347,6 +347,8 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   // Scan mode (migration 0003)
   'scan_mode',
   'scan_batch_size',
+  // Chunked cycle tracking (migration 0004)
+  'scan_cycle_started_at',
 ]);
 
 /**
@@ -1016,4 +1018,65 @@ export async function getLatestFinishedScanAt(db: D1Database): Promise<string | 
     .first<{ finished_at: string }>();
 
   return row?.finished_at ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Chunked scan cycle progress helpers (migration 0004)
+// ---------------------------------------------------------------------------
+
+/**
+ * Count all blueprints belonging to the given expansion ids.
+ *
+ * Returns Y — the total number of watched expansion blueprints in the cache.
+ * Empty `expansionIds` → returns 0 immediately (no DB call needed).
+ */
+export async function countActiveExpansionBlueprints(
+  db: D1Database,
+  expansionIds: number[],
+): Promise<number> {
+  if (expansionIds.length === 0) { return 0; }
+
+  const placeholders = expansionIds.map(() => '?').join(', ');
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM blueprints
+        WHERE expansion_id IN (${placeholders})`,
+    )
+    .bind(...expansionIds)
+    .first<{ n: number }>();
+
+  return row?.n ?? 0;
+}
+
+/**
+ * Count blueprints belonging to the given expansion ids that have been scanned
+ * since the cycle started (i.e. `last_scanned_at >= cycleStart`).
+ *
+ * Returns X — the number of blueprints completed in the current sweep.
+ * Empty `expansionIds` → returns 0 immediately (no DB call needed).
+ *
+ * `cycleStart` must be a UTC datetime string in the format produced by
+ * `datetime('now')` in SQLite: "YYYY-MM-DD HH:MM:SS".
+ */
+export async function countScannedThisCycle(
+  db: D1Database,
+  expansionIds: number[],
+  cycleStart: string,
+): Promise<number> {
+  if (expansionIds.length === 0) { return 0; }
+
+  const placeholders = expansionIds.map(() => '?').join(', ');
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM blueprints
+        WHERE expansion_id IN (${placeholders})
+          AND last_scanned_at IS NOT NULL
+          AND last_scanned_at >= ?`,
+    )
+    .bind(...expansionIds, cycleStart)
+    .first<{ n: number }>();
+
+  return row?.n ?? 0;
 }

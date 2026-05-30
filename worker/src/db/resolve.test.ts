@@ -47,6 +47,7 @@ const BASE_CONFIG: ConfigRow = {
   timezone: 'Asia/Jerusalem',
   scan_mode: 'chunked',
   scan_batch_size: 40,
+  scan_cycle_started_at: null,
   updated_at: '2025-01-01T00:00:00Z',
 };
 

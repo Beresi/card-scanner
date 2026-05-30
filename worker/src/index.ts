@@ -7,7 +7,13 @@ import { configRouter } from './api/config';
 import { watchlistRouter } from './api/watchlist';
 import { dealsRouter } from './api/deals';
 import { resolveRouter } from './api/resolve';
-import { getLatestScanRun } from './db/repo';
+import {
+  getLatestScanRun,
+  getConfig,
+  listActiveWatchlist,
+  countActiveExpansionBlueprints,
+  countScannedThisCycle,
+} from './db/repo';
 
 // ─── Environment bindings ─────────────────────────────────────────────────────
 // DB        — Cloudflare D1 binding (name "DB" matches wrangler.toml [[d1_databases]])
@@ -67,6 +73,12 @@ app.get('/api/health', async (c) => {
   let telegram_sent: number | null = null;
   let api_calls: number | null = null;
 
+  // Cycle progress fields (scan_mode, scan_total, scan_done).
+  // Default to safe fallback values — errors here must never 500 the health endpoint.
+  let scan_mode = 'chunked';
+  let scan_total = 0;
+  let scan_done = 0;
+
   try {
     const run = await getLatestScanRun(c.env.DB);
     db_ok = true;
@@ -83,6 +95,29 @@ app.get('/api/health', async (c) => {
     db_ok = false;
   }
 
+  // Compute cycle progress — wrapped independently so an error here never affects
+  // the existing scan_run fields or the ok/db_ok response structure.
+  try {
+    const config = await getConfig(c.env.DB);
+    const watchlist = await listActiveWatchlist(c.env.DB);
+    const activeExpansionIds = watchlist
+      .filter((w) => w.type === 'expansion')
+      .map((w) => w.cardtrader_id);
+
+    scan_mode = config.scan_mode;
+    scan_total = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
+    scan_done = config.scan_cycle_started_at !== null
+      ? await countScannedThisCycle(c.env.DB, activeExpansionIds, config.scan_cycle_started_at)
+      : 0;
+    // Clamp: scan_done must never exceed scan_total (e.g. if watchlist shrank mid-cycle).
+    if (scan_done > scan_total) { scan_done = scan_total; }
+  } catch {
+    // Non-fatal — return safe defaults computed above; never 500.
+    scan_mode = 'chunked';
+    scan_total = 0;
+    scan_done = 0;
+  }
+
   return c.json({
     ok: true,
     service: 'card-broker',
@@ -94,6 +129,9 @@ app.get('/api/health', async (c) => {
     deals_found,
     telegram_sent,
     api_calls,
+    scan_mode,
+    scan_total,
+    scan_done,
   });
 });
 

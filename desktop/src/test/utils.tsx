@@ -91,6 +91,9 @@ export const FIXTURE_HEALTH: Health = {
   deals_found: 3,
   telegram_sent: 1,
   api_calls: 42,
+  scan_mode: 'chunked',
+  scan_total: 120,
+  scan_done: 40,
 };
 
 /** ScanRun fixtures — one clean run, one with an error. */

@@ -43,6 +43,7 @@ import {
   closeScanRun,
   listActiveWatchlist,
   getConfig,
+  patchConfig,
   upsertDeal,
   markTelegramSent,
   countBlueprintsForExpansion,
@@ -50,6 +51,8 @@ import {
   selectBlueprintsToScan,
   markBlueprintsScanned,
   getLatestFinishedScanAt,
+  countActiveExpansionBlueprints,
+  countScannedThisCycle,
 } from '../db/repo';
 import { resolveEffective } from '../db/resolve';
 import { shouldNotify } from '../telegram/routing';
@@ -328,6 +331,39 @@ async function runChunked(
 
   const blueprintItems = watchlist.filter((w) => w.type === 'blueprint');
   const expansionItems = watchlist.filter((w) => w.type === 'expansion');
+
+  // Cycle management — track "X of Y scanned this sweep".
+  // A cycle = one full pass through all watched expansion blueprints.
+  // Must run before the rotation so the cycleStart anchor is fresh before we
+  // advance last_scanned_at on this batch.
+  const activeExpansionIds = expansionItems.map((w) => w.cardtrader_id);
+  if (activeExpansionIds.length > 0) {
+    try {
+      const total = await countActiveExpansionBlueprints(db, activeExpansionIds);
+      let cycleStart = config.scan_cycle_started_at;
+
+      const shouldStartNewCycle =
+        cycleStart === null ||
+        total === 0 ||
+        (await countScannedThisCycle(db, activeExpansionIds, cycleStart)) >= total;
+
+      if (shouldStartNewCycle) {
+        // Fetch a fresh UTC timestamp from SQLite so the anchor is consistent
+        // with how markBlueprintsScanned writes last_scanned_at.
+        const tsRow = await db
+          .prepare(`SELECT datetime('now') AS ts`)
+          .first<{ ts: string }>();
+        cycleStart = tsRow?.ts ?? new Date().toISOString().replace('T', ' ').slice(0, 19);
+        await patchConfig(db, { scan_cycle_started_at: cycleStart });
+        console.info('[scanner] new scan cycle started', { cycleStart, total });
+      }
+    } catch (cycleErr) {
+      // Non-fatal: cycle tracking failure must not abort the scan.
+      console.error('[scanner] cycle management error (non-fatal)', {
+        error: cycleErr instanceof Error ? cycleErr.message : String(cycleErr),
+      });
+    }
+  }
 
   // Step 1: Warm expansion caches — populate blueprints table for expansions
   // that have no cached blueprints yet. Cap at MAX_CACHE_WARMUPS_PER_RUN

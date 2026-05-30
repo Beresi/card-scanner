@@ -116,6 +116,10 @@ export interface ConfigRow {
   deal_retention_days: number;             // NOT NULL DEFAULT 30
   timezone: string | null;                 // nullable DEFAULT 'Asia/Jerusalem'
 
+  // Chunked scan cycle tracking (migration 0004)
+  // NULL = no cycle started. Set at the start of each new sweep; reset when sweep completes.
+  scan_cycle_started_at: string | null;
+
   updated_at: string;                      // UTC TEXT, datetime('now')
 }
 

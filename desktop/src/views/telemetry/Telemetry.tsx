@@ -18,11 +18,12 @@
  */
 import { useMemo } from 'react';
 
-import { Btn }    from '../../components/Btn';
-import { Clock }  from '../../components/Clock';
-import { Icon }   from '../../components/Icon';
-import { Status } from '../../components/Status';
-import { useDeals, useScanRuns } from '../../api/hooks';
+import { Btn }      from '../../components/Btn';
+import { Clock }    from '../../components/Clock';
+import { Icon }     from '../../components/Icon';
+import { PriceBar } from '../../components/PriceBar';
+import { Status }   from '../../components/Status';
+import { useConfig, useDeals, useHealth, useScanRuns } from '../../api/hooks';
 import { ago, pct, usd } from '../../lib/format';
 import {
   selectTelemetry,
@@ -74,6 +75,19 @@ export function Telemetry({
   const { data: allDeals = [] } = useDeals({ status: 'all' });
   const { data: runs = [] }     = useScanRuns();
 
+  // Scan mode + progress from health; config for scan_mode fallback.
+  const { data: health }  = useHealth();
+  const { data: config }  = useConfig();
+
+  // Resolve which mode is active: health.scan_mode is authoritative (live);
+  // fall back to config.scan_mode while health is loading.
+  const scanMode = health?.scan_mode ?? config?.scan_mode ?? 'chunked';
+  const isChunked = scanMode === 'chunked';
+
+  // Chunked progress values — guard scan_total===0 to avoid divide-by-zero in PriceBar.
+  const scanDone  = health?.scan_done  ?? 0;
+  const scanTotal = health?.scan_total ?? 0;
+
   // Derive all telemetry stats via the pure selectors (reusable, no mock data).
   const stats = useMemo(
     () => selectTelemetry(allDeals, runs),
@@ -116,11 +130,34 @@ export function Telemetry({
 
       <div className="tele-scan cb-bracket">
         <MiniRadar active={scanning} />
-        <div className="tele-scan-info">
-          <span className="cb-eyebrow">next scan</span>
-          <Clock target={scanTarget} className="tele-clock" />
-          <Status tone="good" label="HOURLY · ARMED" />
-        </div>
+
+        {isChunked ? (
+          /* ---- CHUNKED mode: progress readout ---- */
+          <div className="tele-scan-info">
+            <span className="cb-eyebrow">scanning this cycle</span>
+            <span className="cb-mono tele-clock">
+              {scanTotal === 0
+                ? 'caching sets…'
+                : `${scanDone} / ${scanTotal} cards`}
+            </span>
+            {scanTotal > 0 && (
+              <PriceBar
+                value={scanDone}
+                max={scanTotal}
+                tone="good"
+                title={`${scanDone} of ${scanTotal} cards scanned this cycle`}
+              />
+            )}
+            <Status tone="good" label="CHUNKED · ~40/2min" />
+          </div>
+        ) : (
+          /* ---- WHOLE-SET mode: hourly countdown ---- */
+          <div className="tele-scan-info">
+            <span className="cb-eyebrow">next scan</span>
+            <Clock target={scanTarget} className="tele-clock" />
+            <Status tone="good" label="HOURLY · ARMED" />
+          </div>
+        )}
       </div>
 
       <Btn

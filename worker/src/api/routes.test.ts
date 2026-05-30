@@ -28,7 +28,13 @@ import { watchlistRouter } from './watchlist';
 import { dealsRouter } from './deals';
 import { createResolveRouter } from './resolve';
 import { scanRouter } from './scan';
-import { getLatestScanRun } from '../db/repo';
+import {
+  getLatestScanRun,
+  getConfig,
+  listActiveWatchlist,
+  countActiveExpansionBlueprints,
+  countScannedThisCycle,
+} from '../db/repo';
 import { makeD1, seedDeal, seedWatchlist, seedScanRun } from './__test-helpers__/d1';
 import type { Env } from '../index';
 import type { ConfigRow, WatchlistRow, DealRow, ScanRunRow } from '../db/types';
@@ -85,6 +91,9 @@ testApp.get('/api/health', async (c) => {
   let deals_found: number | null = null;
   let telegram_sent: number | null = null;
   let api_calls: number | null = null;
+  let scan_mode = 'chunked';
+  let scan_total = 0;
+  let scan_done = 0;
 
   try {
     const run = await getLatestScanRun(c.env.DB);
@@ -101,6 +110,24 @@ testApp.get('/api/health', async (c) => {
     db_ok = false;
   }
 
+  try {
+    const config = await getConfig(c.env.DB);
+    const watchlist = await listActiveWatchlist(c.env.DB);
+    const activeExpansionIds = watchlist
+      .filter((w) => w.type === 'expansion')
+      .map((w) => w.cardtrader_id);
+    scan_mode = config.scan_mode;
+    scan_total = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
+    scan_done = config.scan_cycle_started_at !== null
+      ? await countScannedThisCycle(c.env.DB, activeExpansionIds, config.scan_cycle_started_at)
+      : 0;
+    if (scan_done > scan_total) { scan_done = scan_total; }
+  } catch {
+    scan_mode = 'chunked';
+    scan_total = 0;
+    scan_done = 0;
+  }
+
   return c.json({
     ok: true,
     service: 'card-broker',
@@ -112,6 +139,9 @@ testApp.get('/api/health', async (c) => {
     deals_found,
     telegram_sent,
     api_calls,
+    scan_mode,
+    scan_total,
+    scan_done,
   });
 });
 
@@ -1175,6 +1205,23 @@ describe('PATCH /api/config — theme_palette + font', () => {
 // GET /api/health
 // ---------------------------------------------------------------------------
 
+/** Health response shape (full). */
+interface HealthBody {
+  ok: boolean;
+  service: string;
+  ts: string;
+  db_ok: boolean;
+  last_scan_at: string | null;
+  last_scan_finished_at: string | null;
+  last_scan_error: string | null;
+  deals_found: number | null;
+  telegram_sent: number | null;
+  api_calls: number | null;
+  scan_mode: string;
+  scan_total: number;
+  scan_done: number;
+}
+
 describe('GET /api/health', () => {
   it('returns ok:true, service, ts, and db_ok:true with empty scan fields when no scans ran', async () => {
     const { db } = makeD1();
@@ -1182,18 +1229,7 @@ describe('GET /api/health', () => {
 
     const res = await GET(env, `${BASE}/api/health`);
     expect(res.status).toBe(200);
-    const body = await res.json<{
-      ok: boolean;
-      service: string;
-      ts: string;
-      db_ok: boolean;
-      last_scan_at: string | null;
-      last_scan_finished_at: string | null;
-      last_scan_error: string | null;
-      deals_found: number | null;
-      telegram_sent: number | null;
-      api_calls: number | null;
-    }>();
+    const body = await res.json<HealthBody>();
     expect(body.ok).toBe(true);
     expect(body.service).toBe('card-broker');
     expect(typeof body.ts).toBe('string');
@@ -1205,6 +1241,10 @@ describe('GET /api/health', () => {
     expect(body.deals_found).toBeNull();
     expect(body.telegram_sent).toBeNull();
     expect(body.api_calls).toBeNull();
+    // Cycle progress defaults — no watchlist items, no cycle started
+    expect(body.scan_mode).toBe('chunked');
+    expect(body.scan_total).toBe(0);
+    expect(body.scan_done).toBe(0);
   });
 
   it('surfaces the latest scan_run counts and timestamps', async () => {
@@ -1229,15 +1269,7 @@ describe('GET /api/health', () => {
 
     const res = await GET(env, `${BASE}/api/health`);
     expect(res.status).toBe(200);
-    const body = await res.json<{
-      db_ok: boolean;
-      last_scan_at: string | null;
-      last_scan_finished_at: string | null;
-      last_scan_error: string | null;
-      deals_found: number | null;
-      telegram_sent: number | null;
-      api_calls: number | null;
-    }>();
+    const body = await res.json<HealthBody>();
     expect(body.db_ok).toBe(true);
     expect(body.last_scan_at).not.toBeNull();
     expect(body.last_scan_finished_at).not.toBeNull();
@@ -1270,6 +1302,103 @@ describe('GET /api/health', () => {
     const env = makeEnv(db);
     const res = await GET(env, `${BASE}/api/health`, false);
     expect(res.status).toBe(401);
+  });
+
+  it('returns scan_mode from config (chunked default)', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/health`);
+    expect(res.status).toBe(200);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_mode).toBe('chunked');
+  });
+
+  it('returns scan_mode=wholeset when config is set to wholeset', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    raw.exec(`UPDATE config SET scan_mode = 'wholeset' WHERE id = 1`);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_mode).toBe('wholeset');
+  });
+
+  it('returns scan_total=0 and scan_done=0 when watchlist is empty', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_total).toBe(0);
+    expect(body.scan_done).toBe(0);
+  });
+
+  it('returns correct scan_total when blueprints are cached for expansion items', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // Seed an expansion watchlist item
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 100, 'Test Set', 1)`);
+    // Seed 5 blueprints for that expansion
+    for (let i = 1; i <= 5; i++) {
+      raw.exec(`INSERT INTO blueprints (id, expansion_id, name) VALUES (${i}, 100, 'Card ${i}')`);
+    }
+
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_total).toBe(5);
+    expect(body.scan_done).toBe(0); // no cycle started yet
+  });
+
+  it('returns scan_done counting blueprints scanned since cycle started', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // Seed an expansion watchlist item
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 200, 'Test Set', 1)`);
+    // Seed 4 blueprints: 2 scanned after cycleStart, 2 not
+    const cycleStart = '2026-01-01 10:00:00';
+    raw.exec(`UPDATE config SET scan_cycle_started_at = '${cycleStart}' WHERE id = 1`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (11, 200, 'A', '2026-01-01 10:01:00')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (12, 200, 'B', '2026-01-01 10:02:00')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (13, 200, 'C', '2025-12-31 23:59:59')`); // before cycle
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (14, 200, 'D', NULL)`); // never scanned
+
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_total).toBe(4);
+    expect(body.scan_done).toBe(2);
+  });
+
+  it('clamps scan_done to scan_total if they diverge', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // Seed expansion watchlist item
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 300, 'Set', 1)`);
+    // Only 1 blueprint in the expansion
+    const cycleStart = '2026-01-01 00:00:00';
+    raw.exec(`UPDATE config SET scan_cycle_started_at = '${cycleStart}' WHERE id = 1`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (21, 300, 'X', '2026-01-01 01:00:00')`);
+    // scan_done (1) == scan_total (1) — clamped, not >
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_done).toBeLessThanOrEqual(body.scan_total);
+    expect(body.scan_done).toBe(1);
+    expect(body.scan_total).toBe(1);
+  });
+
+  it('scan_done=0 when no cycle has started (scan_cycle_started_at is null)', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // cycle column is NULL by default — ensure it
+    raw.exec(`UPDATE config SET scan_cycle_started_at = NULL WHERE id = 1`);
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 400, 'Set', 1)`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, last_scanned_at) VALUES (31, 400, 'Y', '2026-01-01 10:00:00')`);
+
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_done).toBe(0);
+    expect(body.scan_total).toBe(1);
   });
 });
 

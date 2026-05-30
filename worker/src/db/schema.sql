@@ -118,6 +118,11 @@ CREATE TABLE IF NOT EXISTS config (
   deal_retention_days           INTEGER NOT NULL DEFAULT 30,   -- 0 = keep forever
   timezone                      TEXT             DEFAULT 'Asia/Jerusalem',
 
+  -- Chunked scan cycle tracking (migration 0004)
+  -- NULL = no cycle started yet. Reset each time a full sweep through all watched
+  -- expansion blueprints completes (scanned_this_cycle >= total) or on first run.
+  scan_cycle_started_at         TEXT,
+
   updated_at                    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
