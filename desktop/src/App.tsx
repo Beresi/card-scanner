@@ -5,12 +5,14 @@
  *   - 3-column shell: left rail (brand + nav + system foot), center stage
  *     (per-view topstrip header + scrolling content), view-aware right rail
  *   - Boot gate (first-run BootSequence via localStorage 'cardbroker_booted')
- *   - Scan overlay (ScanOverlay, mock animation)
+ *   - Scan overlay (ScanOverlay, fires real POST /api/scan/run-now)
  *   - ⌘K / Ctrl+K command palette (CommandPalette)
  *   - Toasts (useToasts + ToastHost)
  *   - View-aware right rail:
  *       watchlist → WatchInspector (when selectedId set) | WatchSummary
  *       others    → Telemetry
+ *   - Appearance: useApplyAppearance() applies saved theme/palette/font/density/accent
+ *     to the DOM on mount and whenever config changes.
  *
  * State is ephemeral only — server data lives in TanStack Query.
  * No per-second ticks at this level (Clock isolation rule: the only tickers
@@ -19,14 +21,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useDeals, useRunScan } from './api/hooks';
 import { Clock } from './components/Clock';
 import { Icon } from './components/Icon';
 import type { IconName } from './components/Icon';
 import { Status } from './components/Status';
 import { ToastHost, useToasts } from './components/Toast';
 import { useEffects } from './effects/EffectsContext';
-import { useMockDeals } from './mock/hooks';
-import { useMockWatchlist } from './mock/hooks';
+import { useApplyAppearance } from './hooks/useApplyAppearance';
 import { DealFeed } from './views/deal-feed/DealFeed';
 import { Health } from './views/health/Health';
 import { CommandPalette } from './views/palette/CommandPalette';
@@ -38,6 +40,7 @@ import { Telemetry } from './views/telemetry/Telemetry';
 import { WatchInspector } from './views/watchlist/WatchInspector';
 import { WatchSummary } from './views/watchlist/WatchSummary';
 import { Watchlist } from './views/watchlist/Watchlist';
+import { useWatchSelection, select as selectWatchItem } from './views/watchlist/selection';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -101,6 +104,9 @@ function ActiveView({ view, onReplayBoot, onClearDeals }: ActiveViewProps) {
 // ---------------------------------------------------------------------------
 
 export function App() {
+  // ---- Apply saved appearance (theme/palette/font/density/accent) to the DOM ----
+  useApplyAppearance();
+
   // ---- View navigation ----
   const [view, setView] = useState<ViewKey>('feed');
 
@@ -122,13 +128,16 @@ export function App() {
   // ---- Effects flag (for palette toggle) ----
   const { enabled: fxEnabled, setEnabled: setFxEnabled } = useEffects();
 
-  // ---- Watchlist shared store (to branch the right rail + jump-to-item) ----
-  const { selectedId, select: selectWatchItem } = useMockWatchlist();
+  // ---- Watchlist selection (ephemeral store — drives the right rail) ----
+  const { selectedId } = useWatchSelection();
 
-  // ---- Mock deals: high-priority for scan-complete toasts, open for the nav badge ----
-  const { data: priorityDeals } = useMockDeals({ status: 'open', priority: 'high' });
-  const { data: openDeals }     = useMockDeals({ status: 'open' });
+  // ---- Real deals: high-priority for scan-complete toasts; open for the nav badge ----
+  const { data: priorityDeals = [] } = useDeals({ status: 'open', priority: 'high' });
+  const { data: openDeals = [] }     = useDeals({ status: 'open' });
   const unseenCount = openDeals.filter((d) => d.seen === 0).length;
+
+  // ---- Scan-now mutation ----
+  const runScan = useRunScan();
 
   // ---- Global ⌘K / Ctrl+K hotkey ----
   useEffect(() => {
@@ -146,14 +155,17 @@ export function App() {
   const startScan = useCallback(() => {
     if (scanning) return;
     setScanning(true);
-  }, [scanning]);
+    // Fire the real run-now mutation; cache invalidation happens in onSuccess.
+    // The animation overlay runs ~3.6s regardless; the refetch lands when it lands.
+    runScan.mutate();
+  }, [scanning, runScan]);
 
   const onScanComplete = useCallback(() => {
     setScanning(false);
     setNextScanTarget(computeNextScanTarget());
     setView('feed');
 
-    // Push 1–2 toasts from high-priority mock deals
+    // Push 1–2 toasts from high-priority open deals (refetched by mutation onSuccess)
     const topDeals = priorityDeals.slice(0, 2);
     if (topDeals.length === 0) {
       push({
@@ -166,7 +178,7 @@ export function App() {
       topDeals.forEach((deal) => {
         push({
           title: `PRIORITY · ${deal.card_name}`,
-          sub: `−${deal.discount_pct}% · ${deal.expansion_name}`,
+          sub: `−${deal.discount_pct}% · ${deal.expansion_name ?? ''}`,
           tone: 'hot',
           icon: 'bolt',
         });
@@ -199,7 +211,7 @@ export function App() {
       selectWatchItem(id);
       setView('watchlist');
     },
-    [selectWatchItem],
+    [],
   );
 
   // ---- Right rail content ----

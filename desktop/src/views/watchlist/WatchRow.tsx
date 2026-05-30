@@ -6,15 +6,20 @@
  *
  * Interaction:
  *   - Clicking the row calls select(item.id).
- *   - The active Switch calls toggleActive and stopPropagation so it does not
- *     select the row.
- *   - Keyboard: the row is focusable via role="row" + tabIndex=0; Enter selects.
+ *   - The active Switch fires usePatchWatchItem inline and stopPropagation
+ *     so it does not select the row.
+ *   - Keyboard: the row is focusable via role="row" + tabIndex=0; Enter/Space selects.
  *
  * §9a: shows resolved (effective) values for display using effOf helpers.
  * The "hits" column has no WatchItem schema field — it is rendered as a
  * placeholder dash per the spec note (column dropped; slot kept for layout).
+ *
+ * Config is optional here: WatchRow is rendered while config is still loading.
+ * When null/undefined the effOf helpers fall back gracefully (inherited = true,
+ * defaultLabel = '…').
  */
 import type { Config, WatchItem } from '../../api/types';
+import { usePatchWatchItem } from '../../api/hooks';
 import { Icon } from '../../components/Icon';
 import { Switch } from '../../components/Switch';
 import { Tag } from '../../components/Tag';
@@ -22,10 +27,10 @@ import { effImportance, effMinCondition, effThreshold } from './effOf';
 
 export interface WatchRowProps {
   item: WatchItem;
-  config: Config;
+  /** May be undefined while config is loading — effOf handles it gracefully. */
+  config: Config | undefined;
   isSelected: boolean;
   onSelect: (id: number) => void;
-  onToggleActive: (id: number) => void;
 }
 
 // Condition short labels shown in the table row
@@ -37,20 +42,48 @@ const COND_SHORT: Record<string, string> = {
   D:  'D',
 };
 
+// Minimal Config fallback used only while config is still loading.
+const CONFIG_FALLBACK: Config = {
+  default_threshold_pct: 50,
+  default_min_condition: 'NM',
+  cohort_size: 4,
+  min_cohort: 2,
+  new_ticket_foil_pref: 'any',
+  new_ticket_allow_graded: 0,
+  new_ticket_importance: 'normal',
+  new_ticket_telegram_enabled: 0,
+  telegram_min_discount_pct: 60,
+  quiet_hours_start: null,
+  quiet_hours_end: null,
+  digest_on_quiet_end: 0,
+  theme: 'dark',
+  theme_palette: 'cyan',
+  font: 'chakra',
+  accent_color: '',
+  density: 'comfortable',
+  deal_retention_days: 30,
+  timezone: null,
+  updated_at: null,
+};
+
 export function WatchRow({
   item,
   config,
   isSelected,
   onSelect,
-  onToggleActive,
 }: WatchRowProps) {
-  const thrEff = effThreshold(item, config);
-  const condEff = effMinCondition(item, config);
-  const impEff = effImportance(item, config);
+  const patchItem = usePatchWatchItem();
+
+  const effectiveConfig = config ?? CONFIG_FALLBACK;
+  const thrEff  = effThreshold(item, effectiveConfig);
+  const condEff = effMinCondition(item, effectiveConfig);
+  const impEff  = effImportance(item, effectiveConfig);
+
+  const selected = isSelected;
 
   const rowClass = [
     'wr',
-    isSelected ? 'is-sel' : undefined,
+    selected ? 'is-sel' : undefined,
     item.active === 0 ? 'wr-off' : undefined,
   ]
     .filter(Boolean)
@@ -71,6 +104,10 @@ export function WatchRow({
     e.stopPropagation();
   }
 
+  function handleToggleActive() {
+    patchItem.mutate({ id: item.id, patch: { active: item.active === 1 ? 0 : 1 } });
+  }
+
   const condShort = COND_SHORT[condEff.value] ?? condEff.value;
   const isHighImp = impEff.value === 'high';
   const hasTelegram = item.telegram_enabled === 1;
@@ -80,7 +117,7 @@ export function WatchRow({
       className={rowClass}
       role="row"
       tabIndex={0}
-      aria-selected={isSelected}
+      aria-selected={selected}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
     >
@@ -110,7 +147,7 @@ export function WatchRow({
 
       {/* Foil pref */}
       <span className="wr-c wr-foil" role="cell">
-        {item.foil_pref ?? config.new_ticket_foil_pref}
+        {item.foil_pref ?? effectiveConfig.new_ticket_foil_pref}
       </span>
 
       {/* Threshold — dim if inherited */}
@@ -163,7 +200,7 @@ export function WatchRow({
       >
         <Switch
           on={item.active === 1}
-          onChange={() => onToggleActive(item.id)}
+          onChange={handleToggleActive}
           aria-label={`${item.label} active`}
         />
       </span>

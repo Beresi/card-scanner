@@ -4,7 +4,10 @@
  * Layout:
  *   command bar (.wlist-cmd) — search, filter Segmented, sort Select, Add button
  *   table (.wtable) — sticky .wt-head + scrollable .wt-body of WatchRow
- *   AddFlow modal (single instance, open state from shared store)
+ *   AddFlow modal (single instance, open state from shared selection store)
+ *
+ * Data: useWatchlist() → real server data via TanStack Query.
+ * Selection + add-flow-open: useWatchSelection() → ephemeral module store.
  *
  * Filter/sort are LOCAL state (ephemeral UI). They drive the rendered list
  * by actually slicing the items array — not by hiding DOM nodes.
@@ -20,25 +23,24 @@
  *   Name       — ascending label alpha
  *   Importance — high first
  *
- * (Hits sort dropped: WatchItem has no hits field.)
- *
  * Search filters label text (case-insensitive substring match), applied
  * on top of the Segmented filter.
  *
- * AddFlow open state lives in the shared watchlist store so WatchSummary's
+ * AddFlow open state lives in the shared selection store so WatchSummary's
  * "Add card or set" button also works (single <AddFlow> rendered here).
  */
 import { useState } from 'react';
 
 import type { WatchItem } from '../../api/types';
+import { useConfig } from '../../api/hooks';
+import { useWatchlist } from '../../api/hooks';
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
 import { Segmented } from '../../components/Segmented';
 import { Select } from '../../components/Select';
-import { useMockConfig } from '../../mock/hooks';
-import { useMockWatchlist } from '../../mock/hooks';
 import { AddFlow } from './AddFlow';
 import { WatchRow } from './WatchRow';
+import { useWatchSelection } from './selection';
 
 // ---------------------------------------------------------------------------
 // Filter / sort types
@@ -100,16 +102,12 @@ function applySort(items: WatchItem[], sort: SortKey): WatchItem[] {
 // ---------------------------------------------------------------------------
 
 export function Watchlist() {
-  const {
-    items,
-    selectedId,
-    addFlowOpen,
-    select,
-    openAddFlow,
-    closeAddFlow,
-    toggleActive,
-  } = useMockWatchlist();
-  const { data: config } = useMockConfig();
+  // Server data
+  const { data: items = [], isPending, isError } = useWatchlist();
+  const { data: config } = useConfig();
+
+  // Ephemeral selection + add-flow state from the shared store
+  const { selectedId, select, addFlowOpen, openAddFlow, closeAddFlow } = useWatchSelection();
 
   // Ephemeral UI state — filter/sort/search stay in local state
   const [filter, setFilter] = useState<FilterTab>('all');
@@ -205,9 +203,25 @@ export function Watchlist() {
           aria-label="Watchlist items"
           style={{ flex: 1, minHeight: 0 }}
         >
-          {filtered.length === 0 ? (
+          {isPending ? (
             <div className="wt-empty" role="row">
-              <span role="cell">No items match this filter.</span>
+              <span role="cell" className="cb-mono" style={{ color: 'var(--text-dim)' }}>
+                Loading…
+              </span>
+            </div>
+          ) : isError ? (
+            <div className="wt-empty" role="row">
+              <span role="cell" className="cb-mono" style={{ color: 'var(--bad)' }}>
+                Failed to load watchlist. Check connection and retry.
+              </span>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="wt-empty" role="row">
+              <span role="cell">
+                {items.length === 0
+                  ? 'Watchlist is empty. Add a card or set to get started.'
+                  : 'No items match this filter.'}
+              </span>
             </div>
           ) : (
             filtered.map((item) => (
@@ -217,14 +231,13 @@ export function Watchlist() {
                 config={config}
                 isSelected={item.id === selectedId}
                 onSelect={select}
-                onToggleActive={toggleActive}
               />
             ))
           )}
         </div>
       </div>
 
-      {/* AddFlow modal — single instance, open state from shared store */}
+      {/* AddFlow modal — single instance, open state from shared selection store */}
       <AddFlow open={addFlowOpen} onClose={closeAddFlow} />
     </div>
   );

@@ -1,23 +1,32 @@
 /**
  * WatchInspector — right-rail editor for the selected watchlist item.
  *
- * Reads both useMockWatchlist() and useMockConfig() directly from the shared
- * stores — no props needed for the data layer. App's job is simply:
- *   - render <WatchInspector /> when selectedId is non-null
- *   - render <WatchSummary /> otherwise
+ * Reads the selected item from:
+ *   - useWatchSelection() — for selectedId + deselect
+ *   - useWatchlist()      — to find the selected item by id
+ *   - useConfig()         — for inherit baseline values (§9a)
+ *
+ * App renders <WatchInspector /> when selectedId is non-null;
+ * <WatchSummary /> otherwise. No props needed — data comes from hooks.
  *
  * §9a inherit/override: each editable field uses effOf helpers.
  * Fields with a config default are wrapped in InheritField.
- * Fields without a config default (telegram_max_price_cents, telegram_min_savings_cents)
- * are plain nullable inputs — NOT wrapped in InheritField.
+ * Fields without a config default (telegram_max_price_cents) are plain
+ * nullable inputs — NOT wrapped in InheritField.
+ *
+ * Override strategy (uniform, simple):
+ *   - Override a field  → usePatchWatchItem({ id, patch: { col: value } })
+ *   - Reset to inherit  → usePatchWatchItem({ id, patch: { col: null } })
+ *     (PATCH null nulls the column; works for all nullable override cols.)
  *
  * Money: telegram_max_price_cents is stored as integer cents. The input
- * edits a display string (e.g. "12.50") and converts back to cents on blur/change.
+ * edits a display string (e.g. "12.50") and converts back to cents on blur.
  * usd() is used only for display; the store always receives integer cents.
  */
 import { useState } from 'react';
 
 import type { Config, WatchItem } from '../../api/types';
+import { useConfig, usePatchWatchItem, useDeleteWatchItem, useWatchlist } from '../../api/hooks';
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
 import { InheritField } from '../../components/InheritField';
@@ -26,8 +35,8 @@ import { Select } from '../../components/Select';
 import { Slider } from '../../components/Slider';
 import { Switch } from '../../components/Switch';
 import { usd } from '../../lib/format';
-import { useMockConfig } from '../../mock/hooks';
-import { useMockWatchlist } from '../../mock/hooks';
+import { select } from './selection';
+import { useWatchSelection } from './selection';
 import {
   effFoilPref,
   effImportance,
@@ -56,10 +65,6 @@ const CONDITION_OPTIONS = [
 interface InspectorBodyProps {
   item: WatchItem;
   config: Config;
-  patchItem: (id: number, patch: Partial<WatchItem>) => void;
-  resetField: (id: number, field: keyof WatchItem) => void;
-  removeItem: (id: number) => void;
-  select: (id: number | null) => void;
 }
 
 /**
@@ -123,14 +128,10 @@ function MaxPriceInput({
   );
 }
 
-function InspectorBody({
-  item,
-  config,
-  patchItem,
-  resetField,
-  removeItem,
-  select,
-}: InspectorBodyProps) {
+function InspectorBody({ item, config }: InspectorBodyProps) {
+  const patchItem  = usePatchWatchItem();
+  const deleteItem = useDeleteWatchItem();
+
   const thrEff    = effThreshold(item, config);
   const condEff   = effMinCondition(item, config);
   const foilEff   = effFoilPref(item, config);
@@ -138,8 +139,18 @@ function InspectorBody({
   const tgEff     = effTelegramEnabled(item, config);
   const tgDiscEff = effTelegramMinDiscount(item, config);
 
-  const effectiveThrPct = thrEff.value;
+  const effectiveThrPct    = thrEff.value;
   const effectiveTgDiscPct = tgDiscEff.value;
+
+  // Helper: patch a single field
+  function patch(p: Partial<WatchItem>) {
+    patchItem.mutate({ id: item.id, patch: p });
+  }
+
+  // Helper: null a field back to inherit (uniform — works for all nullable cols)
+  function resetField(col: keyof WatchItem) {
+    patchItem.mutate({ id: item.id, patch: { [col]: null } as Partial<WatchItem> });
+  }
 
   // Derived note for the telegram gate explanation
   function telegramNote(): string {
@@ -147,9 +158,15 @@ function InspectorBody({
       return 'High importance — pushes on ANY deal, bypassing the discount gate.';
     }
     if (tgEff.value) {
-      return `Pushes only when discount ≥ ${effectiveTgDiscPct}% (stricter than the ${effectiveThrPct}% app threshold).`;
+      return `Pushes only when discount ≥ ${effectiveTgDiscPct}% (stricter than the ${effectiveThrPct}% app threshold).`;
     }
     return 'App-only. Appears in the feed but never pings Telegram.';
+  }
+
+  function handleRemove() {
+    deleteItem.mutate(item.id, {
+      onSuccess: () => select(null),
+    });
   }
 
   return (
@@ -191,7 +208,7 @@ function InspectorBody({
           label="Threshold"
           inherited={thrEff.inherited}
           defaultLabel={thrEff.defaultLabel}
-          onReset={() => resetField(item.id, 'threshold_pct')}
+          onReset={() => resetField('threshold_pct')}
         >
           <Slider
             label="Discount threshold"
@@ -200,7 +217,7 @@ function InspectorBody({
             max={90}
             step={5}
             suffix="%"
-            onChange={(v) => patchItem(item.id, { threshold_pct: v })}
+            onChange={(v) => patch({ threshold_pct: v })}
           />
         </InheritField>
 
@@ -209,50 +226,49 @@ function InspectorBody({
           label="Min condition"
           inherited={condEff.inherited}
           defaultLabel={condEff.defaultLabel}
-          onReset={() => resetField(item.id, 'min_condition')}
+          onReset={() => resetField('min_condition')}
         >
           <Select
             value={condEff.value}
             options={CONDITION_OPTIONS}
-            onChange={(v) => patchItem(item.id, { min_condition: v })}
+            onChange={(v) => patch({ min_condition: v })}
           />
         </InheritField>
 
-        {/* Foil preference — NOTE: foil_pref is nullable in WatchItem (override col),
-            so InheritField is appropriate here. config.new_ticket_foil_pref is the default. */}
+        {/* Foil preference — nullable override col; config.new_ticket_foil_pref is the default */}
         <InheritField
           label="Foil preference"
           inherited={foilEff.inherited}
           defaultLabel={foilEff.defaultLabel}
-          onReset={() => resetField(item.id, 'foil_pref')}
+          onReset={() => resetField('foil_pref')}
         >
           <Segmented
             value={foilEff.value}
             size="sm"
             options={[
-              { value: 'any', label: 'Any' },
+              { value: 'any',     label: 'Any' },
               { value: 'nonfoil', label: 'Nonfoil' },
-              { value: 'foil', label: 'Foil' },
+              { value: 'foil',    label: 'Foil' },
             ]}
-            onChange={(v) => patchItem(item.id, { foil_pref: v as WatchItem['foil_pref'] })}
+            onChange={(v) => patch({ foil_pref: v as WatchItem['foil_pref'] })}
           />
         </InheritField>
 
-        {/* Importance — nullable override col in WatchItem */}
+        {/* Importance — nullable override col */}
         <InheritField
           label="Importance"
           inherited={impEff.inherited}
           defaultLabel={impEff.defaultLabel}
-          onReset={() => resetField(item.id, 'importance')}
+          onReset={() => resetField('importance')}
         >
           <Segmented
             value={impEff.value}
             size="sm"
             options={[
               { value: 'normal', label: 'Normal' },
-              { value: 'high', label: 'High · bypass' },
+              { value: 'high',   label: 'High · bypass' },
             ]}
-            onChange={(v) => patchItem(item.id, { importance: v as WatchItem['importance'] })}
+            onChange={(v) => patch({ importance: v as WatchItem['importance'] })}
           />
         </InheritField>
 
@@ -262,9 +278,7 @@ function InspectorBody({
             <span className="cb-eyebrow">Telegram routing</span>
             <Switch
               on={tgEff.value}
-              onChange={(on) =>
-                patchItem(item.id, { telegram_enabled: on ? 1 : 0 })
-              }
+              onChange={(on) => patch({ telegram_enabled: on ? 1 : 0 })}
               label="Telegram"
               aria-label="Enable Telegram for this item"
             />
@@ -276,7 +290,7 @@ function InspectorBody({
                 label="Min discount"
                 inherited={tgDiscEff.inherited}
                 defaultLabel={tgDiscEff.defaultLabel}
-                onReset={() => resetField(item.id, 'telegram_min_discount_pct')}
+                onReset={() => resetField('telegram_min_discount_pct')}
               >
                 <Slider
                   label="Telegram minimum discount"
@@ -285,18 +299,14 @@ function InspectorBody({
                   max={90}
                   step={5}
                   suffix="%"
-                  onChange={(v) =>
-                    patchItem(item.id, { telegram_min_discount_pct: v })
-                  }
+                  onChange={(v) => patch({ telegram_min_discount_pct: v })}
                 />
               </InheritField>
 
               {/* Max price — plain nullable, no config default, no InheritField */}
               <MaxPriceInput
                 valueCents={item.telegram_max_price_cents}
-                onChange={(cents) =>
-                  patchItem(item.id, { telegram_max_price_cents: cents })
-                }
+                onChange={(cents) => patch({ telegram_max_price_cents: cents })}
               />
             </>
           )}
@@ -313,13 +323,11 @@ function InspectorBody({
         <Btn
           variant="danger"
           className="cb-btn-sm"
-          onClick={() => {
-            removeItem(item.id);
-            select(null);
-          }}
+          onClick={handleRemove}
+          disabled={deleteItem.isPending}
         >
           <Icon name="x" size={13} />
-          Remove from watchlist
+          {deleteItem.isPending ? 'Removing…' : 'Remove from watchlist'}
         </Btn>
       </div>
     </div>
@@ -327,25 +335,18 @@ function InspectorBody({
 }
 
 // ---------------------------------------------------------------------------
-// WatchInspector — exported component reads shared store directly
+// WatchInspector — exported component reads real hooks directly
 // ---------------------------------------------------------------------------
 
 export function WatchInspector() {
-  const { items, selectedId, select, patchItem, resetField, removeItem } =
-    useMockWatchlist();
-  const { data: config } = useMockConfig();
+  const { selectedId } = useWatchSelection();
+  const { data: items = [] } = useWatchlist();
+  const { data: config } = useConfig();
 
   const item = selectedId != null ? items.find((w) => w.id === selectedId) : undefined;
-  if (!item) return null;
 
-  return (
-    <InspectorBody
-      item={item}
-      config={config}
-      patchItem={patchItem}
-      resetField={resetField}
-      removeItem={removeItem}
-      select={select}
-    />
-  );
+  // Render null if nothing selected, item not found, or config still loading
+  if (!item || !config) return null;
+
+  return <InspectorBody item={item} config={config} />;
 }

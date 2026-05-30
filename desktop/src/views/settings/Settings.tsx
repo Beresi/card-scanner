@@ -1,30 +1,35 @@
 /**
  * Settings — single config row, grouped into 5 panels.
  *
- * Uses useMockConfigStore() for read+write so every subscriber sees live changes.
+ * Data layer: useConfig() (TanStack Query read) + useConfigMutation() (PATCH /api/config).
+ * Each control calls cfg.mutate({ <field>: value }) immediately on change — only the
+ * changed field is sent (Partial<Config>). Appearance is applied app-wide by
+ * useApplyAppearance() in App.tsx; this view only reads/writes the config row.
  *
- * Live apply on mount and on change (via useEffect):
- *   Theme   → document.body.dataset.theme    (body[data-theme="light|dark|system"])
- *   Density → document.body.dataset.density  (body[data-density="compact"])
- *   Accent  → document.documentElement.style.setProperty('--accent', color)
- *             (tokens.css defines --accent on :root)
- *
- * Money / percent values are integer only — no floats ever computed or stored.
- * DbBool ↔ boolean conversion happens only at the Switch boundary.
+ * Booleans are 0|1 (DbBool) at the wire edge — converted at the Switch boundary only.
+ * Money/percent values are integers — no floats stored or computed.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 
-import { Btn } from '../../components/Btn';
-import { Icon } from '../../components/Icon';
-import { Panel } from '../../components/Panel';
+import { Btn }       from '../../components/Btn';
+import { Icon }      from '../../components/Icon';
+import { Panel }     from '../../components/Panel';
 import { Segmented } from '../../components/Segmented';
-import { Select } from '../../components/Select';
-import { Slider } from '../../components/Slider';
-import { Status } from '../../components/Status';
-import { Switch } from '../../components/Switch';
-import { useMockConfigStore } from '../../mock/hooks';
-import type { Condition, Density, FontChoice, FoilPref, Importance, Theme, ThemePalette } from '../../api/types';
+import { Select }    from '../../components/Select';
+import { Slider }    from '../../components/Slider';
+import { Status }    from '../../components/Status';
+import { Switch }    from '../../components/Switch';
+import { useConfig, useConfigMutation } from '../../api/hooks';
+import type {
+  Condition,
+  Density,
+  FontChoice,
+  FoilPref,
+  Importance,
+  Theme,
+  ThemePalette,
+} from '../../api/types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -198,58 +203,23 @@ export interface SettingsProps {
 }
 
 export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
-  const [config, patchConfig] = useMockConfigStore();
+  const { data: config } = useConfig();
+  const cfg = useConfigMutation();
 
   // Local ephemeral state for "Send test" feedback — not server data.
   const [tested, setTested] = useState(false);
 
-  // -------------------------------------------------------------------------
-  // Live apply: all appearance attrs/vars → DOM.
-  // Runs on mount and whenever any appearance field changes.
-  //
-  // DOM contract (tokens.css and its parallel agent consume these exactly):
-  //   body[data-palette]   = ThemePalette   ('cyan' | 'obsidian' | 'matrix' | 'synthwave')
-  //   body[data-theme]     = resolved mode  ('dark' | 'light') — NEVER 'system'
-  //   body[data-font]      = FontChoice     ('chakra' | 'orbitron' | 'rajdhani' | 'system')
-  //   body[data-density]   = Density        ('comfortable' | 'compact')
-  //   body style --accent  = accent_color   (inline on <body> so it overrides
-  //                          the palette's body-level --accent for descendants)
-  //
-  // 'system' mode is resolved here via matchMedia; OS changes re-apply live
-  // via a change listener that is cleaned up on unmount.
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    function applyTheme() {
-      const mode: 'dark' | 'light' =
-        config.theme === 'system'
-          ? window.matchMedia('(prefers-color-scheme: dark)').matches
-            ? 'dark'
-            : 'light'
-          : config.theme;
-      document.body.dataset.palette = config.theme_palette;
-      document.body.dataset.theme   = mode;
-      document.body.dataset.font    = config.font;
-      document.body.dataset.density = config.density;
-      // Set --accent inline on <body> (NOT documentElement): the palette
-      // selectors set --accent on body, so a body-inline value is what wins
-      // for all descendants. Setting it on <html> would be shadowed by the
-      // palette's body-level declaration.
-      document.body.style.setProperty('--accent', config.accent_color);
-    }
-
-    applyTheme();
-
-    // Re-apply when the OS dark/light preference changes (only relevant when
-    // config.theme === 'system'; safe to subscribe always — no-op otherwise).
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    mq.addEventListener('change', applyTheme);
-    return () => {
-      mq.removeEventListener('change', applyTheme);
-    };
-  }, [config.theme_palette, config.theme, config.font, config.density, config.accent_color]);
+  // Guard: config not yet loaded — show a minimal loading state.
+  if (!config) {
+    return (
+      <div className="settings" style={{ padding: 'var(--pad)', maxWidth: 800, margin: '0 auto' }}>
+        <span className="cb-mono cb-text-faint">Loading settings…</span>
+      </div>
+    );
+  }
 
   // -------------------------------------------------------------------------
-  // Telegram test mock — shows "Sent ✓" for 2.4s then reverts.
+  // Telegram test — shows "Sent ✓" for 2.4s then reverts.
   // -------------------------------------------------------------------------
   function handleTestTelegram() {
     setTested(true);
@@ -273,7 +243,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             onChange={(v) =>
               // Palette controls surfaces/backgrounds only — accent stays an
               // independent user choice (decoupled).
-              patchConfig({ theme_palette: v as ThemePalette })
+              cfg.mutate({ theme_palette: v as ThemePalette })
             }
             size="sm"
           />
@@ -283,7 +253,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
           <Segmented
             value={config.theme}
             options={THEME_OPTIONS as { value: string; label: string }[]}
-            onChange={(v) => patchConfig({ theme: v as Theme })}
+            onChange={(v) => cfg.mutate({ theme: v as Theme })}
             size="sm"
           />
         </Row>
@@ -301,7 +271,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                 title={color}
                 aria-label={`Accent color ${color}`}
                 aria-pressed={config.accent_color === color}
-                onClick={() => patchConfig({ accent_color: color })}
+                onClick={() => cfg.mutate({ accent_color: color })}
               />
             ))}
           </div>
@@ -311,7 +281,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
           <Select
             value={config.font}
             options={FONT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-            onChange={(v) => patchConfig({ font: v as FontChoice })}
+            onChange={(v) => cfg.mutate({ font: v as FontChoice })}
             size="sm"
           />
         </Row>
@@ -320,7 +290,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
           <Segmented
             value={config.density}
             options={DENSITY_OPTIONS as { value: string; label: string }[]}
-            onChange={(v) => patchConfig({ density: v as Density })}
+            onChange={(v) => cfg.mutate({ density: v as Density })}
             size="sm"
           />
         </Row>
@@ -347,7 +317,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
               step={1}
               suffix="%"
               label="Default threshold percent"
-              onChange={(v) => patchConfig({ default_threshold_pct: v })}
+              onChange={(v) => cfg.mutate({ default_threshold_pct: v })}
             />
           </Row>
 
@@ -355,7 +325,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             <Select
               value={config.default_min_condition}
               options={CONDITION_OPTIONS}
-              onChange={(v) => patchConfig({ default_min_condition: v as Condition })}
+              onChange={(v) => cfg.mutate({ default_min_condition: v as Condition })}
               size="sm"
             />
           </Row>
@@ -365,7 +335,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
               value={config.cohort_size}
               min={2}
               max={50}
-              onChange={(v) => patchConfig({ cohort_size: v })}
+              onChange={(v) => cfg.mutate({ cohort_size: v })}
               aria-label="Cohort size"
             />
           </Row>
@@ -375,7 +345,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
               value={config.min_cohort}
               min={1}
               max={20}
-              onChange={(v) => patchConfig({ min_cohort: v })}
+              onChange={(v) => cfg.mutate({ min_cohort: v })}
               aria-label="Minimum comparators"
             />
           </Row>
@@ -384,7 +354,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             <Segmented
               value={config.new_ticket_foil_pref}
               options={FOIL_OPTIONS as { value: string; label: string }[]}
-              onChange={(v) => patchConfig({ new_ticket_foil_pref: v as FoilPref })}
+              onChange={(v) => cfg.mutate({ new_ticket_foil_pref: v as FoilPref })}
               size="sm"
             />
           </Row>
@@ -393,7 +363,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             <Segmented
               value={config.new_ticket_importance}
               options={IMPORTANCE_OPTIONS as { value: string; label: string }[]}
-              onChange={(v) => patchConfig({ new_ticket_importance: v as Importance })}
+              onChange={(v) => cfg.mutate({ new_ticket_importance: v as Importance })}
               size="sm"
             />
           </Row>
@@ -422,7 +392,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             step={1}
             suffix="%"
             label="Telegram minimum discount percent"
-            onChange={(v) => patchConfig({ telegram_min_discount_pct: v })}
+            onChange={(v) => cfg.mutate({ telegram_min_discount_pct: v })}
           />
         </Row>
 
@@ -431,20 +401,20 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             <QuietHourInput
               value={config.quiet_hours_start}
               label="Quiet hours start (0-23)"
-              onChange={(v) => patchConfig({ quiet_hours_start: v })}
+              onChange={(v) => cfg.mutate({ quiet_hours_start: v })}
             />
             <span className="cb-text-faint" style={{ fontSize: 12 }}>→</span>
             <QuietHourInput
               value={config.quiet_hours_end}
               label="Quiet hours end (0-23)"
-              onChange={(v) => patchConfig({ quiet_hours_end: v })}
+              onChange={(v) => cfg.mutate({ quiet_hours_end: v })}
             />
             {config.timezone && (
               <span className="set-quiet-tz">{config.timezone}</span>
             )}
             <Switch
               on={config.digest_on_quiet_end === 1}
-              onChange={(v) => patchConfig({ digest_on_quiet_end: v ? 1 : 0 })}
+              onChange={(v) => cfg.mutate({ digest_on_quiet_end: v ? 1 : 0 })}
               label="digest"
             />
           </div>
@@ -476,7 +446,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             value={config.deal_retention_days}
             min={0}
             max={365}
-            onChange={(v) => patchConfig({ deal_retention_days: v })}
+            onChange={(v) => cfg.mutate({ deal_retention_days: v })}
             suffix="days"
             aria-label="Deal retention in days"
           />

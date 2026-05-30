@@ -7,26 +7,26 @@
  *   DISCOUNT SPREAD — horizontal bar chart over the 4 discount buckets
  *   ACTIVITY — last ~7 deals sorted by found_at desc
  *
- * Data is sourced from mock hooks (useMockTelemetry, useMockDeals). Wave 3 wiring
- * will swap these for real TanStack Query hooks without touching this component.
+ * Data layer: useDeals() + useScanRuns() (TanStack Query, real API).
+ * Pure selectors from mock/selectors.ts compute all derived stats — they are
+ * pure functions that work on real data just as well as mock data.
  *
- * The Clock leaf owns its own setInterval — this component never ticks itself.
- * MiniRadar's sweep animation is pure CSS — no JS motion here.
- *
- * Props:
- *   onScanNow   — optional callback wired up by the App (Wave 3)
+ * Props (provided by App — do NOT change this signature):
+ *   onScanNow   — optional callback wired up by the App
  *   scanning    — whether a scan is currently in progress
  *   scanTarget  — epoch ms of the next scheduled scan (passed to Clock)
  */
 import { useMemo } from 'react';
 
-import { Btn } from '../../components/Btn';
-import { Clock } from '../../components/Clock';
-import { Icon } from '../../components/Icon';
+import { Btn }    from '../../components/Btn';
+import { Clock }  from '../../components/Clock';
+import { Icon }   from '../../components/Icon';
 import { Status } from '../../components/Status';
-import { useMockDeals } from '../../mock/hooks';
-import { useMockTelemetry } from '../../mock/hooks';
+import { useDeals, useScanRuns } from '../../api/hooks';
 import { ago, pct, usd } from '../../lib/format';
+import {
+  selectTelemetry,
+} from '../../mock/selectors';
 import { MiniRadar } from './MiniRadar';
 
 export interface TelemetryProps {
@@ -69,8 +69,16 @@ export function Telemetry({
   scanTarget,
   className,
 }: TelemetryProps) {
-  const stats = useMockTelemetry();
-  const { data: allDeals } = useMockDeals({ status: 'all' });
+  // Fetch all deals (dismissed + open) for the histogram and activity log.
+  // Empty arrays while loading so the selectors still produce valid output.
+  const { data: allDeals = [] } = useDeals({ status: 'all' });
+  const { data: runs = [] }     = useScanRuns();
+
+  // Derive all telemetry stats via the pure selectors (reusable, no mock data).
+  const stats = useMemo(
+    () => selectTelemetry(allDeals, runs),
+    [allDeals, runs],
+  );
 
   // Activity log: last 7 deals sorted by found_at descending.
   const activityLog = useMemo(

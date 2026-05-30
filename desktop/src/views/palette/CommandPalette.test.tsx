@@ -2,27 +2,95 @@
  * CommandPalette.test.tsx — keyboard + filter behaviour of the ⌘K palette.
  *
  * Strategy:
- *   - Open the palette (open=true) with vi.fn() callbacks.
- *   - Query via screen (the palette portals to document.body via Modal).
- *   - All mock-store data is the real in-memory store (useMockWatchlist) — we
- *     assert on the navigate/action callbacks, not on the watch items.
+ *   - CommandPalette now calls useWatchlist() via the real hooks, so it
+ *     needs QueryClientProvider + a mocked getWatchlist.
+ *   - renderWithProviders (test/utils) supplies QueryClientProvider + EffectsProvider.
+ *   - The api/client module is mocked so the hook resolves to fixture data
+ *     with no network traffic.
+ *   - All callbacks are vi.fn(); we assert on navigate / close / scanNow calls.
  *
  * Note: The palette wraps its content in Modal which portals to document.body,
  * so RTL's default `screen` queries (which search document.body) work fine.
  */
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+// ---------------------------------------------------------------------------
+// Module mocks — declared before any imports of the mocked modules
+// ---------------------------------------------------------------------------
+
+vi.mock('../../api/client', () => ({
+  getWatchlist: vi.fn(),
+  // Provide every exported name the views might touch to avoid missing-export errors
+  getConfig:    vi.fn(),
+  getHealth:    vi.fn(),
+  getScanRuns:  vi.fn(),
+  getDeals:     vi.fn(),
+  patchConfig:  vi.fn(),
+  patchDeal:    vi.fn(),
+  patchWatchItem:  vi.fn(),
+  resetWatchField: vi.fn(),
+  createWatchItem: vi.fn(),
+  deleteWatchItem: vi.fn(),
+  runScanNow:   vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue(undefined),
+}));
+
+// ---------------------------------------------------------------------------
+// Import mocked functions AFTER vi.mock() declarations
+// ---------------------------------------------------------------------------
+import { getWatchlist } from '../../api/client';
+import { renderWithProviders } from '../../test/utils';
 import { CommandPalette } from './CommandPalette';
 import type { CommandPaletteProps } from './CommandPalette';
+import type { WatchItem } from '../../api/types';
 
-// jsdom does not implement scrollIntoView — stub it globally so the
-// palette's "scroll active item into view" useEffect doesn't throw.
+const mockGetWatchlist = getWatchlist as ReturnType<typeof vi.fn>;
+
+// jsdom does not implement scrollIntoView — stub it globally.
 beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = vi.fn();
 });
+
+// ---------------------------------------------------------------------------
+// Fixture watchlist items for the "Watch Items" group
+// ---------------------------------------------------------------------------
+
+const PALETTE_WATCHLIST: WatchItem[] = [
+  {
+    id: 1,
+    type: 'blueprint',
+    cardtrader_id: 100501,
+    label: 'Ragavan, Nimble Pilferer',
+    game_id: 1,
+    min_condition: null, foil_pref: null, allow_graded: null,
+    threshold_pct: null, importance: null, telegram_enabled: null,
+    telegram_min_discount_pct: null, telegram_max_price_cents: null,
+    telegram_min_savings_cents: null,
+    active: 1,
+    created_at: '2026-05-25 10:00:00',
+    updated_at: '2026-05-25 10:00:00',
+  },
+  {
+    id: 2,
+    type: 'expansion',
+    cardtrader_id: 1623,
+    label: 'Modern Horizons 2',
+    game_id: 1,
+    min_condition: null, foil_pref: null, allow_graded: null,
+    threshold_pct: null, importance: null, telegram_enabled: null,
+    telegram_min_discount_pct: null, telegram_max_price_cents: null,
+    telegram_min_savings_cents: null,
+    active: 1,
+    created_at: '2026-05-20 08:00:00',
+    updated_at: '2026-05-20 08:00:00',
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Default props factory — all callbacks are vi.fn()
@@ -31,12 +99,12 @@ beforeAll(() => {
 function makeProps(overrides: Partial<CommandPaletteProps> = {}): CommandPaletteProps {
   return {
     open: true,
-    onClose: vi.fn(),
-    onNavigate: vi.fn(),
-    onScanNow: vi.fn(),
-    onReplayBoot: vi.fn(),
+    onClose:         vi.fn(),
+    onNavigate:      vi.fn(),
+    onScanNow:       vi.fn(),
+    onReplayBoot:    vi.fn(),
     onToggleEffects: vi.fn(),
-    onJumpToWatch: vi.fn(),
+    onJumpToWatch:   vi.fn(),
     ...overrides,
   };
 }
@@ -51,18 +119,25 @@ function getInput() {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Cleanup
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Always resolve getWatchlist to the fixture list for each test.
+  mockGetWatchlist.mockResolvedValue(PALETTE_WATCHLIST);
 });
 
-describe('CommandPalette', () => {
-  it('renders the search input and command list when open=true', () => {
-    render(<CommandPalette {...makeProps()} />);
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
-    // Input is present
+describe('CommandPalette', () => {
+
+  it('renders the search input and command list when open=true', async () => {
+    renderWithProviders(<CommandPalette {...makeProps()} />);
+
+    // Input is present immediately (palette renders synchronously; hook resolves async)
     expect(getInput()).toBeInTheDocument();
 
     // At least one built-in command is visible: "Deal Feed" (Navigate group)
@@ -70,13 +145,13 @@ describe('CommandPalette', () => {
   });
 
   it('renders nothing when open=false', () => {
-    render(<CommandPalette {...makeProps({ open: false })} />);
+    renderWithProviders(<CommandPalette {...makeProps({ open: false })} />);
     expect(screen.queryByRole('textbox', { name: 'Search commands' })).not.toBeInTheDocument();
   });
 
   it('typing a query filters the list: matching command shows, non-matching hides', async () => {
     const user = userEvent.setup();
-    render(<CommandPalette {...makeProps()} />);
+    renderWithProviders(<CommandPalette {...makeProps()} />);
 
     // Before filtering, "Settings" is visible
     expect(screen.getByText('Settings')).toBeInTheDocument();
@@ -90,7 +165,7 @@ describe('CommandPalette', () => {
 
   it('empty query shows all commands', async () => {
     const user = userEvent.setup();
-    render(<CommandPalette {...makeProps()} />);
+    renderWithProviders(<CommandPalette {...makeProps()} />);
 
     await user.type(getInput(), 'xyz-no-match');
     // "no matching command" message
@@ -102,10 +177,10 @@ describe('CommandPalette', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
-  it('ArrowDown then Enter runs the highlighted command and calls onClose', async () => {
+  it('ArrowDown then Enter runs the highlighted command and calls onScanNow + onClose', async () => {
     const user = userEvent.setup();
     const props = makeProps();
-    render(<CommandPalette {...props} />);
+    renderWithProviders(<CommandPalette {...props} />);
 
     // Filter to a single known command to make the active index predictable
     await user.type(getInput(), 'scan now');
@@ -123,7 +198,7 @@ describe('CommandPalette', () => {
   it('Escape calls onClose', async () => {
     const user = userEvent.setup();
     const props = makeProps();
-    render(<CommandPalette {...props} />);
+    renderWithProviders(<CommandPalette {...props} />);
 
     // Press Esc — Modal's keyDown handler calls onClose
     await user.keyboard('{Escape}');
@@ -134,7 +209,7 @@ describe('CommandPalette', () => {
   it('clicking a navigation command calls onNavigate with the correct view key', async () => {
     const user = userEvent.setup();
     const props = makeProps();
-    render(<CommandPalette {...props} />);
+    renderWithProviders(<CommandPalette {...props} />);
 
     // "Health" navigate command
     await user.type(getInput(), 'health');
@@ -145,4 +220,28 @@ describe('CommandPalette', () => {
     // onClose fires from the item's onClick wrapper
     expect(props.onClose).toHaveBeenCalled();
   });
+
+  it('watch items from getWatchlist appear in the palette after hook resolves', async () => {
+    renderWithProviders(<CommandPalette {...makeProps()} />);
+
+    // Wait for the watchlist query to resolve and the Watch Items group to render
+    await waitFor(() => {
+      expect(screen.getByText('Ragavan, Nimble Pilferer')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Modern Horizons 2')).toBeInTheDocument();
+  });
+
+  it('clicking a watch item calls onJumpToWatch with the correct id', async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    renderWithProviders(<CommandPalette {...props} />);
+
+    // Wait for watch items to appear
+    const itemLabel = await screen.findByText('Ragavan, Nimble Pilferer');
+    await user.click(itemLabel);
+
+    expect(props.onJumpToWatch).toHaveBeenCalledWith(1);
+    expect(props.onClose).toHaveBeenCalled();
+  });
+
 });

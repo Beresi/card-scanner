@@ -26,7 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IconName } from '../../components/Icon';
 import { Icon } from '../../components/Icon';
 import { Modal } from '../../components/Modal';
-import { useMockWatchlist } from '../../mock/hooks';
+import { useWatchlist } from '../../api/hooks';
 import type { ViewKey } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ export function CommandPalette({
   onToggleEffects,
   onJumpToWatch,
 }: CommandPaletteProps) {
-  const { items: watchItems } = useMockWatchlist();
+  const { data: watchItems = [] } = useWatchlist();
   const [q, setQ] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
   const activeItemRef = useRef<HTMLButtonElement | null>(null);

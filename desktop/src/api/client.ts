@@ -1,4 +1,4 @@
-import type { Config, Deal, Health, WatchItem } from './types';
+import type { Config, Deal, Health, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, ResettableField } from './types';
 
 // ---------------------------------------------------------------------------
 // Environment — base URL and dev token come from Vite env vars.
@@ -153,4 +153,54 @@ export function patchConfig(body: Partial<Config>): Promise<Config> {
 /** GET /api/health */
 export function getHealth(): Promise<Health> {
   return apiFetch<Health>('/api/health');
+}
+
+/** POST /api/watchlist — create a new watch item. Override fields omitted → born inheriting. */
+export function createWatchItem(body: WatchItemCreate): Promise<WatchItem> {
+  return apiFetch<WatchItem>('/api/watchlist', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** PATCH /api/watchlist/:id — update explicit fields only; omit unchanged fields. */
+export function patchWatchItem(id: number, body: Partial<WatchItem>): Promise<WatchItem> {
+  return apiFetch<WatchItem>(`/api/watchlist/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /api/watchlist/:id — 204 No Content → undefined. */
+export function deleteWatchItem(id: number): Promise<void> {
+  return apiFetch<void>(`/api/watchlist/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * PATCH /api/watchlist/:id/reset — null a single override field back to inherit.
+ * Only 'threshold_pct' and 'telegram_min_discount_pct' are accepted; others → 400.
+ */
+export function resetWatchField(id: number, field: ResettableField): Promise<WatchItem> {
+  return apiFetch<WatchItem>(`/api/watchlist/${id}/reset`, {
+    method: 'PATCH',
+    body: JSON.stringify({ field }),
+  });
+}
+
+/** GET /api/scan/runs — newest-first list of up to 20 scan runs. */
+export function getScanRuns(): Promise<ScanRun[]> {
+  return apiFetch<ScanRun[]>('/api/scan/runs');
+}
+
+// ---------------------------------------------------------------------------
+// Scan now
+// ---------------------------------------------------------------------------
+
+/** POST /api/scan/run-now — trigger an immediate scan. */
+export function runScanNow(): Promise<ScanNowResult> {
+  return apiFetch<ScanNowResult>('/api/scan/run-now', {
+    method: 'POST',
+  });
 }

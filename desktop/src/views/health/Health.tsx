@@ -6,7 +6,8 @@
  *   2. Stat tiles: aggregated metrics from the last N scan runs.
  *   3. Scan-run log: per-run table, newest first, with click-to-expand error detail.
  *
- * Data comes from mock hooks only (presentational phase — no TanStack Query / API calls).
+ * Data layer: useHealth() + useScanRuns() (TanStack Query, real API).
+ * Loading and error states are surfaced inline — never silent.
  * Clock is the sole ticking element; all other rendering is static.
  */
 
@@ -17,7 +18,7 @@ import { Icon }   from '../../components/Icon';
 import { Panel }  from '../../components/Panel';
 import { Status } from '../../components/Status';
 import { Tag }    from '../../components/Tag';
-import { useMockHealth, useMockScanRuns } from '../../mock/hooks';
+import { useHealth, useScanRuns } from '../../api/hooks';
 import { ago } from '../../lib/format';
 import type { ScanRun } from '../../api/types';
 
@@ -90,6 +91,25 @@ function computeStats(runs: ScanRun[]): StatTiles {
   }
 
   return { totalDeals, totalTg, errorCount };
+}
+
+// ---------------------------------------------------------------------------
+// Token status helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive a token status label from the most recent run's error text.
+ * If the latest run errored with a token/401 message → "CHECK" (warn).
+ * If runs list is empty → "—" (accent tile; no data yet).
+ * Otherwise → "OK" (good).
+ */
+function tokenStatus(runs: ScanRun[]): { label: string; tileClass: string } {
+  if (runs.length === 0) return { label: '—', tileClass: 'health-tile-accent' };
+  const latestError = runs[0]?.error ?? null;
+  if (latestError && /401|token|unauthori[sz]ed/i.test(latestError)) {
+    return { label: 'CHECK', tileClass: 'health-tile-warn' };
+  }
+  return { label: 'OK', tileClass: 'health-tile-good' };
 }
 
 // ---------------------------------------------------------------------------
@@ -178,21 +198,68 @@ export function Health() {
   // Ephemeral UI: set of expanded error-row run ids.
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
-  const { data: health }   = useMockHealth();
-  const { data: scanRuns } = useMockScanRuns();
+  const { data: health, isPending: healthPending, isError: healthError } = useHealth();
+  const { data: rawRuns, isPending: runsPending, isError: runsError } = useScanRuns();
 
-  // Newest first (mock data is already ordered, but sort defensively).
-  const sortedRuns = [...scanRuns].sort((a, b) => b.id - a.id);
+  // Show a loading state while either query is pending.
+  if (healthPending || runsPending) {
+    return (
+      <div className="health">
+        <Panel glow className="health-banner cb-bracket">
+          <div className="health-banner-in">
+            <div className="health-state">
+              <Status tone="idle" />
+              <div>
+                <div className="health-state-big">CONNECTING…</div>
+                <p className="cb-eyebrow">loading health data</p>
+              </div>
+            </div>
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  // Surface API errors inline rather than silently empty.
+  if (healthError || runsError) {
+    return (
+      <div className="health">
+        <Panel glow className="health-banner cb-bracket">
+          <div className="health-banner-in">
+            <div className="health-state">
+              <Status tone="hot" />
+              <div>
+                <div className="health-state-big">API ERROR</div>
+                <p className="cb-eyebrow">could not reach the health endpoint</p>
+              </div>
+            </div>
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  // Newest first — the API already returns newest-first but sort defensively.
+  const sortedRuns = [...(rawRuns ?? [])].sort((a, b) => b.id - a.id);
 
   const { totalDeals, totalTg, errorCount } = computeStats(sortedRuns);
+  const { label: tokenLabel, tileClass: tokenTileClass } = tokenStatus(sortedRuns);
+
+  // Derive scanner state from health fields.
+  const scannerOnline = health?.ok === true && health?.db_ok === true;
+  const bannerLabel   = scannerOnline ? 'SCANNER ONLINE' : 'SCANNER DEGRADED';
+  const bannerSub     = scannerOnline ? 'all systems nominal' : 'check API + DB status';
 
   // Next hourly cron tick: top of the next whole hour from now.
   const nextScanTarget = Math.ceil(Date.now() / 3_600_000) * 3_600_000;
 
-  // Last-run timestamp: prefer the most recent run row; fall back to the health
-  // endpoint's last_scan_at (the real hook will always have this).
+  // Last-run timestamp: prefer the most recent run row; fall back to health.last_scan_at.
   const lastRunAt: string | null =
-    sortedRuns[0]?.started_at ?? health.last_scan_at ?? null;
+    sortedRuns[0]?.started_at ?? health?.last_scan_at ?? null;
+
+  // DB tile: show db_ok status from health.
+  const dbLabel = health?.db_ok === true ? '200 OK' : 'ERROR';
+  const dbTone  = health?.db_ok === true ? 'health-tile-good' : 'health-tile-warn';
 
   function toggleExpanded(id: number) {
     setExpandedIds((prev) => {
@@ -217,13 +284,16 @@ export function Health() {
 
           {/* Left: status dot + headline + sub line */}
           <div className="health-state">
-            <Status tone="good" />
+            <Status tone={scannerOnline ? 'good' : 'warn'} />
             <div>
-              <div className="health-state-big">SCANNER ONLINE</div>
+              <div className="health-state-big">{bannerLabel}</div>
               <p className="cb-eyebrow">
-                all systems nominal
+                {bannerSub}
                 {lastRunAt !== null && (
                   <> &middot; last run {ago(lastRunAt)} ago</>
+                )}
+                {lastRunAt === null && (
+                  <> &middot; no scans yet</>
                 )}
               </p>
             </div>
@@ -243,19 +313,22 @@ export function Health() {
       {/* ------------------------------------------------------------------ */}
       <div className="health-stats" role="list" aria-label="System statistics">
 
-        {/* Uplink */}
-        <div className="health-tile cb-chamfer-sm health-tile-good" role="listitem">
-          <span className="health-tile-v cb-mono">200 OK</span>
+        {/* DB / Uplink — derived from health.db_ok */}
+        <div className={`health-tile cb-chamfer-sm ${dbTone}`} role="listitem">
+          <span className="health-tile-v cb-mono">{dbLabel}</span>
           <span className="cb-eyebrow">cardtrader /info</span>
         </div>
 
-        {/* Token */}
-        <div className="health-tile cb-chamfer-sm health-tile-good" role="listitem">
-          <span className="health-tile-v cb-mono">VALID</span>
+        {/* Token — derived from latest run error text */}
+        <div
+          className={`health-tile cb-chamfer-sm ${tokenTileClass}`}
+          role="listitem"
+        >
+          <span className="health-tile-v cb-mono">{tokenLabel}</span>
           <span className="cb-eyebrow">bearer · r/w scope</span>
         </div>
 
-        {/* Telegram */}
+        {/* Telegram — static; config has no token_ok field */}
         <div className="health-tile cb-chamfer-sm health-tile-accent" role="listitem">
           <span className="health-tile-v cb-mono">LINKED</span>
           <span className="cb-eyebrow">@cardbroker_bot</span>

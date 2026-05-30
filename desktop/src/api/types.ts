@@ -116,21 +116,23 @@ export interface WatchItem {
 }
 
 // ---------------------------------------------------------------------------
-// Health — loose shape; the Worker may add fields without breaking the UI
+// Health — enriched shape returned by GET /api/health
 // ---------------------------------------------------------------------------
 export interface Health {
-  status: 'ok' | 'degraded' | 'error';
-  token_ok: boolean;
+  ok: boolean;
+  service: string;
+  ts: string;
   db_ok: boolean;
   last_scan_at: string | null;
+  last_scan_finished_at: string | null;
   last_scan_error: string | null;
-  // Permit additional fields the backend may send
-  [key: string]: unknown;
+  deals_found: number | null;
+  telegram_sent: number | null;
+  api_calls: number | null;
 }
 
 // ---------------------------------------------------------------------------
-// ScanRun — one row of the scan_runs table, returned by GET /api/health
-// or a future scan-runs endpoint
+// ScanRun — one row of the scan_runs table, returned by GET /api/scan/runs
 // ---------------------------------------------------------------------------
 export interface ScanRun {
   id: number;
@@ -142,4 +144,42 @@ export interface ScanRun {
   deals_found: number;
   telegram_sent: number;
   error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// WatchItemCreate — body for POST /api/watchlist
+// Required core fields + optional override columns (omit to inherit from config)
+// ---------------------------------------------------------------------------
+export type WatchItemCreate = {
+  type: WatchItemType;
+  cardtrader_id: number;
+  label: string;
+  game_id?: number;
+} & Partial<Pick<
+  WatchItem,
+  | 'min_condition'
+  | 'foil_pref'
+  | 'allow_graded'
+  | 'threshold_pct'
+  | 'importance'
+  | 'telegram_enabled'
+  | 'telegram_min_discount_pct'
+  | 'telegram_max_price_cents'
+  | 'telegram_min_savings_cents'
+>>;
+
+// ---------------------------------------------------------------------------
+// ResettableField — the two columns that PATCH /api/watchlist/:id/reset accepts
+// ---------------------------------------------------------------------------
+export type ResettableField = 'threshold_pct' | 'telegram_min_discount_pct';
+
+// ---------------------------------------------------------------------------
+// ScanNowResult — response body of POST /api/scan/run-now
+// ---------------------------------------------------------------------------
+export interface ScanNowResult {
+  ok: boolean;
+  scan_run_id?: number;
+  deals_found?: number;
+  telegram_sent?: number;
+  error?: string;
 }

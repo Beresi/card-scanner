@@ -2,30 +2,36 @@
  * AddFlow — modal for adding a card (blueprint) or a whole set (expansion)
  * to the watchlist.
  *
- * Props: { open, onClose } — the shared watchlist store owns the open state;
- * this component is purely presentational and delegates addItem through the store.
+ * Wave 1 implementation: manual CardTrader id entry / URL paste.
+ * Search-as-you-type against the resolve cache is deferred to Wave 2.
+ *
+ * Props: { open, onClose } — the shared selection store owns the open state.
  *
  * Two modes via a Segmented toggle:
- *   - "Watch a whole set": search MOCK_EXPANSIONS by name/code → pick → addItem
- *   - "Watch a card": step 1 pick a set, step 2 search MOCK_BLUEPRINTS by name → pick → addItem
+ *   - "Watch a card":     blueprint id + label + optional URL → POST /api/watchlist
+ *   - "Watch a whole set": expansion id + label + optional URL → POST /api/watchlist
  *
- * On success: calls addItem then onClose (the shared store will auto-select the new item).
+ * On success: calls onClose() and selects the newly-created item.
+ *
+ * Id input accepts:
+ *   - A raw positive integer (e.g. "12345")
+ *   - A CardTrader URL (e.g. https://www.cardtrader.com/cards/12345) → trailing number extracted
+ *
+ * Validation: id must be a positive integer; label must be non-empty.
+ * Submit button is disabled until the form is valid.
  *
  * Accessibility: uses the Modal primitive which handles focus trap, Esc close,
  * focus restore, and role="dialog".
- *
- * Data: MOCK_EXPANSIONS / MOCK_BLUEPRINTS are local imports for the mock phase.
- * Feature-agent will replace with TanStack Query hooks later.
  */
 import { useState } from 'react';
 
-import type { WatchItem } from '../../api/types';
+import { useCreateWatchItem } from '../../api/hooks';
+import type { WatchItemType } from '../../api/types';
 import { Icon } from '../../components/Icon';
 import { Modal } from '../../components/Modal';
 import { Segmented } from '../../components/Segmented';
-import { MOCK_BLUEPRINTS } from '../../mock/blueprints';
-import { MOCK_EXPANSIONS, type MockExpansion } from '../../mock/expansions';
-import { useMockWatchlist } from '../../mock/hooks';
+import { Btn } from '../../components/Btn';
+import { select } from './selection';
 
 export interface AddFlowProps {
   open: boolean;
@@ -34,213 +40,129 @@ export interface AddFlowProps {
 
 type AddMode = 'card' | 'set';
 
+const MODAL_TITLE_ID = 'addflow-title';
+
 // ---------------------------------------------------------------------------
-// SetSearch — shared expansion search UI used in both modes
+// Id / URL parsing
 // ---------------------------------------------------------------------------
 
-interface SetSearchProps {
-  q: string;
-  onQChange: (q: string) => void;
-  onPick: (exp: MockExpansion) => void;
-  /** Label shown on each result row's right side */
-  pickLabel: string;
-  autoFocus?: boolean;
-}
+/**
+ * Parse a raw CardTrader id or a CardTrader URL into a positive integer.
+ * Returns null if the value cannot be resolved.
+ *
+ * Accepts:
+ *   "12345"
+ *   "https://www.cardtrader.com/cards/12345"
+ *   "https://www.cardtrader.com/en/magic/expansions/12345"
+ * (any URL whose pathname ends with a numeric segment)
+ */
+function parseCardtraderId(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
 
-function SetSearch({ q, onQChange, onPick, pickLabel, autoFocus }: SetSearchProps) {
-  const lower = q.toLowerCase();
-  const results = MOCK_EXPANSIONS.filter(
-    (e) =>
-      e.name.toLowerCase().includes(lower) ||
-      e.code.toLowerCase().includes(lower),
-  );
+  // Try URL parse first
+  if (trimmed.startsWith('http')) {
+    try {
+      const url = new URL(trimmed);
+      const segments = url.pathname.split('/').filter(Boolean);
+      const last = segments[segments.length - 1];
+      if (last && /^\d+$/.test(last)) {
+        const n = parseInt(last, 10);
+        return n > 0 ? n : null;
+      }
+    } catch {
+      // Fall through to plain-number parse
+    }
+  }
 
-  return (
-    <>
-      <div className="addflow-search">
-        <Icon name="search" size={15} svgProps={{ style: { color: 'var(--text-dim)' } }} />
-        <input
-          className="cb-input"
-          style={{ border: 0, paddingLeft: 0, background: 'transparent' } as React.CSSProperties}
-          placeholder="search expansions by name or code…"
-          value={q}
-          onChange={(e) => onQChange(e.target.value)}
-          autoFocus={autoFocus}
-          aria-label="Search expansions"
-        />
-      </div>
-      <div className="addflow-results" role="listbox" aria-label="Expansion results">
-        {results.length === 0 && (
-          <p className="addflow-none cb-mono">no expansions match</p>
-        )}
-        {results.map((exp) => (
-          <button
-            key={exp.id}
-            className="addflow-opt"
-            type="button"
-            role="option"
-            aria-selected={false}
-            onClick={() => onPick(exp)}
-          >
-            <Icon name="layers" size={15} svgProps={{ style: { color: 'var(--accent)' } }} />
-            <span className="addflow-opt-name">{exp.name}</span>
-            <span className="cb-mono" style={{ fontSize: 10, color: 'var(--text-faint)' } as React.CSSProperties}>
-              {exp.code.toUpperCase()}
-            </span>
-            <span className="addflow-opt-add cb-mono" style={{ fontSize: 11, color: 'var(--text-dim)' } as React.CSSProperties}>
-              {pickLabel}
-            </span>
-          </button>
-        ))}
-      </div>
-    </>
-  );
+  // Plain number
+  if (/^\d+$/.test(trimmed)) {
+    const n = parseInt(trimmed, 10);
+    return n > 0 ? n : null;
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
-// SetMode — watch a whole expansion
+// AddFlow component
 // ---------------------------------------------------------------------------
 
-interface SetModeProps {
-  onAdd: (partial: Pick<WatchItem, 'type' | 'cardtrader_id' | 'label' | 'game_id'>) => void;
-  onClose: () => void;
-}
+export function AddFlow({ open, onClose }: AddFlowProps) {
+  const createItem = useCreateWatchItem();
 
-function SetMode({ onAdd, onClose }: SetModeProps) {
-  const [q, setQ] = useState('');
+  const [mode, setMode]   = useState<AddMode>('card');
+  const [idRaw, setIdRaw] = useState('');
+  const [label, setLabel] = useState('');
+  const [idError, setIdError]     = useState<string | null>(null);
+  const [labelError, setLabelError] = useState<string | null>(null);
 
-  return (
-    <div className="addflow-body">
-      <SetSearch
-        q={q}
-        onQChange={setQ}
-        autoFocus
-        pickLabel="add ›"
-        onPick={(exp) => {
-          onAdd({ type: 'expansion', cardtrader_id: exp.id, label: exp.name, game_id: exp.game_id });
-          onClose();
-        }}
-      />
-    </div>
-  );
-}
+  // Derived
+  const parsedId = parseCardtraderId(idRaw);
+  const idValid  = parsedId !== null;
+  const labelValid = label.trim().length > 0;
+  const canSubmit = idValid && labelValid && !createItem.isPending;
 
-// ---------------------------------------------------------------------------
-// CardMode — watch a specific card (2-step)
-// ---------------------------------------------------------------------------
+  function handleClose() {
+    // Reset form state on close
+    setMode('card');
+    setIdRaw('');
+    setLabel('');
+    setIdError(null);
+    setLabelError(null);
+    createItem.reset();
+    onClose();
+  }
 
-interface CardModeProps {
-  onAdd: (partial: Pick<WatchItem, 'type' | 'cardtrader_id' | 'label' | 'game_id'>) => void;
-  onClose: () => void;
-}
+  function handleModeChange(v: string) {
+    setMode(v as AddMode);
+    setIdRaw('');
+    setIdError(null);
+  }
 
-function CardMode({ onAdd, onClose }: CardModeProps) {
-  const [selectedExp, setSelectedExp] = useState<MockExpansion | null>(null);
-  const [expQ, setExpQ] = useState('');
-  const [cardQ, setCardQ] = useState('');
+  function handleIdChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setIdRaw(e.target.value);
+    setIdError(null);
+  }
 
-  if (!selectedExp) {
-    return (
-      <div className="addflow-body">
-        <div className="addflow-step">
-          <span className="cb-eyebrow">Step 1 · pick the set</span>
-        </div>
-        <SetSearch
-          q={expQ}
-          onQChange={setExpQ}
-          autoFocus
-          pickLabel="select ›"
-          onPick={(exp) => {
-            setSelectedExp(exp);
-            setCardQ('');
-          }}
-        />
-      </div>
+  function handleLabelChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setLabel(e.target.value);
+    setLabelError(null);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+
+    // Validate
+    let hasError = false;
+    if (!idValid) {
+      setIdError('Enter a positive integer or paste a CardTrader URL.');
+      hasError = true;
+    }
+    if (!labelValid) {
+      setLabelError('Label is required.');
+      hasError = true;
+    }
+    if (hasError) return;
+
+    const type: WatchItemType = mode === 'set' ? 'expansion' : 'blueprint';
+
+    createItem.mutate(
+      { type, cardtrader_id: parsedId!, label: label.trim(), game_id: 1 },
+      {
+        onSuccess: (created) => {
+          select(created.id);
+          handleClose();
+        },
+      },
     );
   }
 
-  const lower = cardQ.toLowerCase();
-  const cards = MOCK_BLUEPRINTS.filter(
-    (b) => b.expansion_id === selectedExp.id && b.name.toLowerCase().includes(lower),
-  );
-
-  return (
-    <div className="addflow-body">
-      <div className="addflow-step">
-        <button
-          type="button"
-          className="addflow-back"
-          onClick={() => { setSelectedExp(null); setExpQ(''); }}
-        >
-          &lsaquo; change set
-        </button>
-        <span className="cb-eyebrow">
-          Step 2 · pick a card in{' '}
-          <span style={{ color: 'var(--accent)' }}>{selectedExp.name}</span>
-        </span>
-      </div>
-
-      <div className="addflow-search">
-        <Icon name="search" size={15} svgProps={{ style: { color: 'var(--text-dim)' } }} />
-        <input
-          className="cb-input"
-          style={{ border: 0, paddingLeft: 0, background: 'transparent' } as React.CSSProperties}
-          placeholder="search cards…"
-          value={cardQ}
-          onChange={(e) => setCardQ(e.target.value)}
-          autoFocus
-          aria-label="Search cards"
-        />
-      </div>
-
-      <div className="addflow-results" role="listbox" aria-label="Card results">
-        {cards.length === 0 && (
-          <p className="addflow-none cb-mono">no cached cards match</p>
-        )}
-        {cards.map((bp) => (
-          <button
-            key={bp.id}
-            className="addflow-opt"
-            type="button"
-            role="option"
-            aria-selected={false}
-            onClick={() => {
-              onAdd({ type: 'blueprint', cardtrader_id: bp.id, label: bp.name, game_id: selectedExp.game_id });
-              onClose();
-            }}
-          >
-            <Icon name="card" size={15} svgProps={{ style: { color: 'var(--text-dim)' } }} />
-            <span className="addflow-opt-name">{bp.name}</span>
-            <span className="cb-mono" style={{ fontSize: 10, color: 'var(--text-faint)' } as React.CSSProperties}>
-              #{bp.id}
-            </span>
-            <Icon name="plus" size={14} className="addflow-opt-add" svgProps={{ style: { color: 'var(--text-dim)' } }} />
-          </button>
-        ))}
-      </div>
-
-      <p className="addflow-hint cb-mono">
-        tip · only locally-cached cards are shown; more sets coming when the API is wired
-      </p>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// AddFlow — exported component
-// ---------------------------------------------------------------------------
-
-const MODAL_TITLE_ID = 'addflow-title';
-
-export function AddFlow({ open, onClose }: AddFlowProps) {
-  const { addItem } = useMockWatchlist();
-  const [mode, setMode] = useState<AddMode>('card');
-
-  // Reset mode when modal is closed
-  function handleClose() {
-    setMode('card');
-    onClose();
-  }
+  const modeLabel = mode === 'card' ? 'blueprint' : 'expansion';
+  const idPlaceholder =
+    mode === 'card'
+      ? 'blueprint id or https://www.cardtrader.com/cards/…'
+      : 'expansion id or https://www.cardtrader.com/en/magic/expansions/…';
 
   return (
     <Modal open={open} onClose={handleClose} labelledBy={MODAL_TITLE_ID}>
@@ -260,18 +182,104 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
 
       <Segmented
         value={mode}
-        onChange={(v) => setMode(v as AddMode)}
+        onChange={handleModeChange}
         options={[
           { value: 'card', label: 'Watch a card' },
           { value: 'set',  label: 'Watch a whole set' },
         ]}
       />
 
-      {mode === 'set' ? (
-        <SetMode onAdd={addItem} onClose={handleClose} />
-      ) : (
-        <CardMode onAdd={addItem} onClose={handleClose} />
-      )}
+      <form className="addflow-body" onSubmit={handleSubmit} noValidate>
+        {/* Id / URL field */}
+        <div className="addflow-field">
+          <label className="cb-eyebrow" htmlFor="addflow-id">
+            CardTrader {modeLabel} id
+          </label>
+          <input
+            id="addflow-id"
+            className={`cb-input${idError ? ' cb-input-err' : ''}`}
+            type="text"
+            value={idRaw}
+            placeholder={idPlaceholder}
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            aria-invalid={idError ? 'true' : undefined}
+            aria-describedby={idError ? 'addflow-id-err' : undefined}
+            onChange={handleIdChange}
+          />
+          {idError && (
+            <span
+              id="addflow-id-err"
+              className="addflow-err cb-mono"
+              role="alert"
+            >
+              {idError}
+            </span>
+          )}
+        </div>
+
+        {/* Label field */}
+        <div className="addflow-field">
+          <label className="cb-eyebrow" htmlFor="addflow-label">
+            Label
+          </label>
+          <input
+            id="addflow-label"
+            className={`cb-input${labelError ? ' cb-input-err' : ''}`}
+            type="text"
+            value={label}
+            placeholder={mode === 'card' ? 'e.g. Black Lotus' : 'e.g. Alpha'}
+            autoComplete="off"
+            aria-invalid={labelError ? 'true' : undefined}
+            aria-describedby={labelError ? 'addflow-label-err' : undefined}
+            onChange={handleLabelChange}
+          />
+          {labelError && (
+            <span
+              id="addflow-label-err"
+              className="addflow-err cb-mono"
+              role="alert"
+            >
+              {labelError}
+            </span>
+          )}
+        </div>
+
+        {/* Hint */}
+        <p className="addflow-hint cb-mono">
+          Card = CardTrader blueprint id · Set = expansion id.
+          Paste a CardTrader URL or type the id directly.
+          (Search-as-you-type is coming next.)
+        </p>
+
+        {/* API error */}
+        {createItem.isError && (
+          <p className="addflow-err cb-mono" role="alert">
+            {createItem.error?.message ?? 'Failed to create item. Check the id and try again.'}
+          </p>
+        )}
+
+        {/* Actions */}
+        <div className="addflow-actions">
+          <Btn
+            variant="ghost"
+            type="button"
+            className="cb-btn-sm"
+            onClick={handleClose}
+          >
+            Cancel
+          </Btn>
+          <Btn
+            variant="primary"
+            type="submit"
+            className="cb-btn-sm"
+            disabled={!canSubmit}
+          >
+            {createItem.isPending ? 'Adding…' : 'Add to watchlist'}
+          </Btn>
+        </div>
+      </form>
     </Modal>
   );
 }

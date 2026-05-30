@@ -1,14 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  createWatchItem,
+  deleteWatchItem,
   getConfig,
   getDeals,
   getHealth,
+  getScanRuns,
   getWatchlist,
   patchConfig,
   patchDeal,
+  patchWatchItem,
+  resetWatchField,
+  runScanNow,
 } from './client';
-import type { Config, Deal, Health, WatchItem } from './types';
+import type { Config, Deal, Health, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
 
 // ---------------------------------------------------------------------------
 // Filter shape — used by the Deal Feed command bar
@@ -120,5 +126,112 @@ export function useHealth() {
   return useQuery<Health, Error>({
     queryKey: ['health'] as const,
     queryFn: getHealth,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scan runs hook
+// ---------------------------------------------------------------------------
+
+/**
+ * useScanRuns — fetches the scan run log (newest first, ≤20 rows).
+ *
+ * Used by the Health view's scan history table.
+ */
+export function useScanRuns() {
+  return useQuery<ScanRun[], Error>({
+    queryKey: ['scanRuns'] as const,
+    queryFn: getScanRuns,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist mutations
+// ---------------------------------------------------------------------------
+
+/**
+ * useCreateWatchItem — POST /api/watchlist.
+ *
+ * Override columns omitted from the body → new ticket is born inheriting (§9a).
+ * Invalidates ['watchlist'] so the table and inspector reflect the new item.
+ */
+export function useCreateWatchItem() {
+  const qc = useQueryClient();
+  return useMutation<WatchItem, Error, WatchItemCreate>({
+    mutationFn: (body) => createWatchItem(body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['watchlist'] });
+    },
+  });
+}
+
+/**
+ * usePatchWatchItem — PATCH /api/watchlist/:id.
+ *
+ * Send only the changed fields (partial patch). Invalidates ['watchlist'].
+ */
+export function usePatchWatchItem() {
+  const qc = useQueryClient();
+  return useMutation<WatchItem, Error, { id: number; patch: Partial<WatchItem> }>({
+    mutationFn: ({ id, patch }) => patchWatchItem(id, patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['watchlist'] });
+    },
+  });
+}
+
+/**
+ * useDeleteWatchItem — DELETE /api/watchlist/:id.
+ *
+ * Cascade-deletes the item's deals, so both ['watchlist'] and ['deals'] are
+ * invalidated on success.
+ */
+export function useDeleteWatchItem() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, number>({
+    mutationFn: (id) => deleteWatchItem(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['watchlist'] });
+      void qc.invalidateQueries({ queryKey: ['deals'] });
+    },
+  });
+}
+
+/**
+ * useResetWatchField — PATCH /api/watchlist/:id/reset { field }.
+ *
+ * Nulls a single resettable override column back to inherit (§9a).
+ * Only 'threshold_pct' and 'telegram_min_discount_pct' are accepted by the server.
+ * Invalidates ['watchlist'] so the inspector flips back to "inherit · {default}".
+ */
+export function useResetWatchField() {
+  const qc = useQueryClient();
+  return useMutation<WatchItem, Error, { id: number; field: ResettableField }>({
+    mutationFn: ({ id, field }) => resetWatchField(id, field),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['watchlist'] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scan now mutation
+// ---------------------------------------------------------------------------
+
+/**
+ * useRunScan — POST /api/scan/run-now.
+ *
+ * Triggers an immediate scan. On success invalidates ['deals'], ['scanRuns'],
+ * and ['health'] so all live queries pick up new data when the scan finishes.
+ */
+export function useRunScan() {
+  const qc = useQueryClient();
+  return useMutation<ScanNowResult, Error, void>({
+    mutationFn: () => runScanNow(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['deals'] });
+      void qc.invalidateQueries({ queryKey: ['scanRuns'] });
+      void qc.invalidateQueries({ queryKey: ['health'] });
+    },
   });
 }

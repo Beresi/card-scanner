@@ -1,43 +1,113 @@
 /**
  * smoke.test.tsx — render-smoke tests for top-level views.
  *
- * Asserts each view mounts without throwing and shows a known key landmark.
- * Catches runtime crashes (missing context, bad hook calls) that tsc misses.
- *
- * DealFeed already has its own test suite; the remaining four views are covered here.
+ * Asserts each view mounts without throwing and shows a known key landmark
+ * after the async TanStack Query resolves to fixture data.
  *
  * Provider strategy:
- *   - Health, Watchlist, Settings, Telemetry all use mock hooks (no TanStack Query)
- *     so no QueryClientProvider is needed.
- *   - EffectsProvider is needed only if a view calls useEffects(); Settings
- *     and Health do NOT import useEffects() directly, but we wrap all views for
- *     safety — it is cheap and harmless.
- *   - Tauri invoke is mocked for any view that may transitively import it.
+ *   - All four views call real hooks (useConfig, useHealth, useScanRuns,
+ *     useDeals, useWatchlist) so every render needs QueryClientProvider.
+ *   - renderWithProviders (test/utils) wraps in QueryClientProvider (fresh,
+ *     retry:false) + EffectsProvider.
+ *   - The api/client module is mocked so no real network is touched.
+ *   - @tauri-apps/api/core invoke is mocked (transitively imported by some views).
  *
- * Telemetry requires a `scanTarget` prop (epoch ms of the next scan).
+ * Async assertions use findBy* (waitFor internally) so they resolve only after
+ * the query promise settles to the fixture value.
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen } from '@testing-library/react';
 
-// Stub Tauri so invoke doesn't throw in jsdom
+// ---------------------------------------------------------------------------
+// Module mocks — declared before any imports of the mocked modules
+// ---------------------------------------------------------------------------
+
+// Mock the entire api/client module so no real fetch ever fires.
+vi.mock('../api/client', () => ({
+  getConfig:    vi.fn(),
+  getHealth:    vi.fn(),
+  getScanRuns:  vi.fn(),
+  getDeals:     vi.fn(),
+  getWatchlist: vi.fn(),
+  patchConfig:  vi.fn(),
+  patchDeal:    vi.fn(),
+  patchWatchItem:  vi.fn(),
+  resetWatchField: vi.fn(),
+  createWatchItem: vi.fn(),
+  deleteWatchItem: vi.fn(),
+  runScanNow:   vi.fn(),
+  ApiError: class ApiError extends Error {
+    status: number;
+    code: string;
+    constructor(status: number, code: string, message?: string) {
+      super(message ?? `API error ${status}: ${code}`);
+      this.name = 'ApiError';
+      this.status = status;
+      this.code = code;
+    }
+  },
+}));
+
+// Stub Tauri so invoke doesn't throw in jsdom.
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { EffectsProvider } from '../effects/EffectsContext';
-import { Settings }   from './settings/Settings';
-import { Health }     from './health/Health';
-import { Watchlist }  from './watchlist/Watchlist';
-import { Telemetry }  from './telemetry/Telemetry';
+// ---------------------------------------------------------------------------
+// Import mocked functions AFTER vi.mock() declarations
+// ---------------------------------------------------------------------------
+import { getConfig, getHealth, getScanRuns, getDeals, getWatchlist } from '../api/client';
+import {
+  renderWithProviders,
+  FIXTURE_CONFIG,
+  FIXTURE_HEALTH,
+  FIXTURE_SCAN_RUNS,
+} from '../test/utils';
+
+import { Settings }  from './settings/Settings';
+import { Health }    from './health/Health';
+import { Watchlist } from './watchlist/Watchlist';
+import { Telemetry } from './telemetry/Telemetry';
+import type { WatchItem } from '../api/types';
+
+// Cast to typed vi mock functions
+const mockGetConfig    = getConfig    as ReturnType<typeof vi.fn>;
+const mockGetHealth    = getHealth    as ReturnType<typeof vi.fn>;
+const mockGetScanRuns  = getScanRuns  as ReturnType<typeof vi.fn>;
+const mockGetDeals     = getDeals     as ReturnType<typeof vi.fn>;
+const mockGetWatchlist = getWatchlist as ReturnType<typeof vi.fn>;
+
+// A minimal WatchItem list — enough for the Watchlist smoke test.
+const SMOKE_WATCHLIST: WatchItem[] = [
+  {
+    id: 1,
+    type: 'blueprint',
+    cardtrader_id: 100501,
+    label: 'Ragavan, Nimble Pilferer',
+    game_id: 1,
+    min_condition: null,
+    foil_pref: null,
+    allow_graded: null,
+    threshold_pct: null,
+    importance: null,
+    telegram_enabled: null,
+    telegram_min_discount_pct: null,
+    telegram_max_price_cents: null,
+    telegram_min_savings_cents: null,
+    active: 1,
+    created_at: '2026-05-25 10:00:00',
+    updated_at: '2026-05-25 10:00:00',
+  },
+];
 
 // ---------------------------------------------------------------------------
-// Wrapper
+// Cleanup
 // ---------------------------------------------------------------------------
 
-function Wrap({ children }: { children: React.ReactNode }) {
-  return <EffectsProvider>{children}</EffectsProvider>;
-}
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // Smoke tests
@@ -45,48 +115,49 @@ function Wrap({ children }: { children: React.ReactNode }) {
 
 describe('View render-smoke', () => {
 
-  it('Settings mounts and shows "Appearance"', () => {
-    render(
-      <Wrap>
-        <Settings />
-      </Wrap>,
-    );
-    // The Appearance panel heading is always present
-    expect(screen.getByText('Appearance')).toBeInTheDocument();
+  it('Settings mounts and shows "Appearance" after config loads', async () => {
+    mockGetConfig.mockResolvedValueOnce(FIXTURE_CONFIG);
+
+    renderWithProviders(<Settings />);
+
+    // Settings shows "Loading settings…" until config resolves;
+    // findByText waits for the Appearance panel heading to appear.
+    expect(await screen.findByText('Appearance')).toBeInTheDocument();
   });
 
-  it('Health mounts and shows "SCANNER ONLINE"', () => {
-    render(
-      <Wrap>
-        <Health />
-      </Wrap>,
-    );
-    expect(screen.getByText('SCANNER ONLINE')).toBeInTheDocument();
+  it('Health mounts and shows "SCANNER ONLINE" after health + scan-runs load', async () => {
+    mockGetHealth.mockResolvedValueOnce(FIXTURE_HEALTH);
+    mockGetScanRuns.mockResolvedValueOnce(FIXTURE_SCAN_RUNS);
+
+    renderWithProviders(<Health />);
+
+    // Health shows "CONNECTING…" while pending; after both queries resolve
+    // it renders the banner with "SCANNER ONLINE".
+    expect(await screen.findByText('SCANNER ONLINE')).toBeInTheDocument();
   });
 
-  it('Watchlist mounts and shows a known mock item label', () => {
-    render(
-      <Wrap>
-        <Watchlist />
-      </Wrap>,
-    );
-    // "Ragavan, Nimble Pilferer" is always in MOCK_WATCHLIST (id=1)
-    expect(screen.getByText('Ragavan, Nimble Pilferer')).toBeInTheDocument();
+  it('Watchlist mounts and shows a known mock item label after watchlist loads', async () => {
+    mockGetWatchlist.mockResolvedValueOnce(SMOKE_WATCHLIST);
+    mockGetConfig.mockResolvedValueOnce(FIXTURE_CONFIG);
+
+    renderWithProviders(<Watchlist />);
+
+    expect(
+      await screen.findByText('Ragavan, Nimble Pilferer'),
+    ).toBeInTheDocument();
   });
 
-  it('Telemetry mounts and shows "next scan"', () => {
-    // Fixed epoch so Clock doesn't rely on real Date.now() for the label
+  it('Telemetry mounts and shows "next scan"', async () => {
+    // Telemetry uses useDeals + useScanRuns; both resolve to empty arrays here.
+    mockGetDeals.mockResolvedValue([]);
+    mockGetScanRuns.mockResolvedValue([]);
+
     const fixedTarget = new Date('2026-06-01T12:00:00Z').getTime();
 
-    render(
-      <Wrap>
-        <Telemetry scanTarget={fixedTarget} />
-      </Wrap>,
-    );
-    // The eyebrow label "next scan" is always rendered in the SCAN section
-    // Note: there may be multiple; findAllByText is safe but getByText is fine
-    // if there's exactly one; use getAllByText to be safe.
-    const labels = screen.getAllByText('next scan');
+    renderWithProviders(<Telemetry scanTarget={fixedTarget} />);
+
+    // "next scan" label is in the SCAN section (renders immediately; no loading guard).
+    const labels = await screen.findAllByText('next scan');
     expect(labels.length).toBeGreaterThanOrEqual(1);
   });
 
