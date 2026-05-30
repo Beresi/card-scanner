@@ -27,9 +27,11 @@ import { configRouter } from './config';
 import { watchlistRouter } from './watchlist';
 import { dealsRouter } from './deals';
 import { resolveRouter } from './resolve';
-import { makeD1, seedDeal, seedWatchlist } from './__test-helpers__/d1';
+import { scanRouter } from './scan';
+import { getLatestScanRun } from '../db/repo';
+import { makeD1, seedDeal, seedWatchlist, seedScanRun } from './__test-helpers__/d1';
 import type { Env } from '../index';
-import type { ConfigRow, WatchlistRow, DealRow } from '../db/types';
+import type { ConfigRow, WatchlistRow, DealRow, ScanRunRow } from '../db/types';
 
 // ---------------------------------------------------------------------------
 // Test app — mirrors the auth gate + route mounting from index.ts
@@ -51,6 +53,46 @@ testApp.route('/api/config', configRouter);
 testApp.route('/api/watchlist', watchlistRouter);
 testApp.route('/api/deals', dealsRouter);
 testApp.route('/api/resolve', resolveRouter);
+testApp.route('/api/scan', scanRouter);
+
+// Health endpoint — mirrors index.ts implementation for testing
+testApp.get('/api/health', async (c) => {
+  let db_ok = false;
+  let last_scan_at: string | null = null;
+  let last_scan_finished_at: string | null = null;
+  let last_scan_error: string | null = null;
+  let deals_found: number | null = null;
+  let telegram_sent: number | null = null;
+  let api_calls: number | null = null;
+
+  try {
+    const run = await getLatestScanRun(c.env.DB);
+    db_ok = true;
+    if (run !== null) {
+      last_scan_at = run.started_at;
+      last_scan_finished_at = run.finished_at;
+      last_scan_error = run.error;
+      deals_found = run.deals_found;
+      telegram_sent = run.telegram_sent;
+      api_calls = run.api_calls;
+    }
+  } catch {
+    db_ok = false;
+  }
+
+  return c.json({
+    ok: true,
+    service: 'card-broker',
+    ts: new Date().toISOString(),
+    db_ok,
+    last_scan_at,
+    last_scan_finished_at,
+    last_scan_error,
+    deals_found,
+    telegram_sent,
+    api_calls,
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -975,5 +1017,249 @@ describe('GET /api/resolve/blueprints', () => {
     const body = await res.json<{ id: number; name: string }[]>();
     expect(body).toHaveLength(1);
     expect(body[0]!.name).toBe('Black Lotus');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Config — theme_palette + font columns
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/config — theme_palette + font', () => {
+  it('persists theme_palette and GET reflects the change', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+
+    const patchRes = await PATCH(env, `${BASE}/api/config`, { theme_palette: 'rose' });
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json<ConfigRow>();
+    expect(patched.theme_palette).toBe('rose');
+
+    const getRes = await GET(env, `${BASE}/api/config`);
+    const got = await getRes.json<ConfigRow>();
+    expect(got.theme_palette).toBe('rose');
+  });
+
+  it('persists font and GET reflects the change', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+
+    const patchRes = await PATCH(env, `${BASE}/api/config`, { font: 'mono' });
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json<ConfigRow>();
+    expect(patched.font).toBe('mono');
+
+    const getRes = await GET(env, `${BASE}/api/config`);
+    const got = await getRes.json<ConfigRow>();
+    expect(got.font).toBe('mono');
+  });
+
+  it('persists theme_palette + font in a single PATCH', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+
+    const patchRes = await PATCH(env, `${BASE}/api/config`, {
+      theme_palette: 'amber',
+      font: 'plex',
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json<ConfigRow>();
+    expect(patched.theme_palette).toBe('amber');
+    expect(patched.font).toBe('plex');
+  });
+
+  it('GET /api/config includes theme_palette and font with schema defaults', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+
+    const res = await GET(env, `${BASE}/api/config`);
+    expect(res.status).toBe(200);
+    const body = await res.json<ConfigRow>();
+    // Schema defaults
+    expect(body.theme_palette).toBe('cyan');
+    expect(body.font).toBe('chakra');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/health
+// ---------------------------------------------------------------------------
+
+describe('GET /api/health', () => {
+  it('returns ok:true, service, ts, and db_ok:true with empty scan fields when no scans ran', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+
+    const res = await GET(env, `${BASE}/api/health`);
+    expect(res.status).toBe(200);
+    const body = await res.json<{
+      ok: boolean;
+      service: string;
+      ts: string;
+      db_ok: boolean;
+      last_scan_at: string | null;
+      last_scan_finished_at: string | null;
+      last_scan_error: string | null;
+      deals_found: number | null;
+      telegram_sent: number | null;
+      api_calls: number | null;
+    }>();
+    expect(body.ok).toBe(true);
+    expect(body.service).toBe('card-broker');
+    expect(typeof body.ts).toBe('string');
+    expect(body.db_ok).toBe(true);
+    // No scans ever → all scan fields null
+    expect(body.last_scan_at).toBeNull();
+    expect(body.last_scan_finished_at).toBeNull();
+    expect(body.last_scan_error).toBeNull();
+    expect(body.deals_found).toBeNull();
+    expect(body.telegram_sent).toBeNull();
+    expect(body.api_calls).toBeNull();
+  });
+
+  it('surfaces the latest scan_run counts and timestamps', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // Seed an older run (should not appear)
+    seedScanRun(raw, {
+      api_calls: 1,
+      deals_found: 0,
+      telegram_sent: 0,
+      finished_at: "datetime('now','-2 hours')",
+    });
+    // Seed the most recent run
+    seedScanRun(raw, {
+      api_calls: 12,
+      deals_found: 4,
+      telegram_sent: 2,
+      error: null,
+      finished_at: "datetime('now')",
+    });
+
+    const res = await GET(env, `${BASE}/api/health`);
+    expect(res.status).toBe(200);
+    const body = await res.json<{
+      db_ok: boolean;
+      last_scan_at: string | null;
+      last_scan_finished_at: string | null;
+      last_scan_error: string | null;
+      deals_found: number | null;
+      telegram_sent: number | null;
+      api_calls: number | null;
+    }>();
+    expect(body.db_ok).toBe(true);
+    expect(body.last_scan_at).not.toBeNull();
+    expect(body.last_scan_finished_at).not.toBeNull();
+    expect(body.last_scan_error).toBeNull();
+    // Must reflect the latest run's counts
+    expect(body.deals_found).toBe(4);
+    expect(body.telegram_sent).toBe(2);
+    expect(body.api_calls).toBe(12);
+  });
+
+  it('surfaces last_scan_error when the latest run errored', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    seedScanRun(raw, {
+      api_calls: 3,
+      deals_found: 0,
+      telegram_sent: 0,
+      error: 'CardTrader 401',
+      finished_at: "datetime('now')",
+    });
+
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<{ last_scan_error: string | null }>();
+    expect(body.last_scan_error).toBe('CardTrader 401');
+  });
+
+  it('returns 401 without auth', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/health`, false);
+    expect(res.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/scan/runs
+// ---------------------------------------------------------------------------
+
+describe('GET /api/scan/runs', () => {
+  it('returns an empty array when no scans have run', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+
+    const res = await GET(env, `${BASE}/api/scan/runs`);
+    expect(res.status).toBe(200);
+    const body = await res.json<ScanRunRow[]>();
+    expect(body).toEqual([]);
+  });
+
+  it('returns seeded runs newest-first', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // Insert three runs in chronological order
+    seedScanRun(raw, { api_calls: 1, deals_found: 0, telegram_sent: 0 });
+    seedScanRun(raw, { api_calls: 5, deals_found: 2, telegram_sent: 1 });
+    seedScanRun(raw, { api_calls: 8, deals_found: 5, telegram_sent: 3 });
+
+    const res = await GET(env, `${BASE}/api/scan/runs`);
+    expect(res.status).toBe(200);
+    const body = await res.json<ScanRunRow[]>();
+    expect(body).toHaveLength(3);
+    // Newest first — last inserted has highest id
+    expect(body[0]!.api_calls).toBe(8);
+    expect(body[1]!.api_calls).toBe(5);
+    expect(body[2]!.api_calls).toBe(1);
+  });
+
+  it('each row has the expected ScanRunRow fields', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    seedScanRun(raw, {
+      api_calls: 7,
+      deals_found: 3,
+      telegram_sent: 1,
+      error: null,
+      finished_at: "datetime('now')",
+    });
+
+    const res = await GET(env, `${BASE}/api/scan/runs`);
+    const body = await res.json<ScanRunRow[]>();
+    expect(body).toHaveLength(1);
+    const run = body[0]!;
+    expect(typeof run.id).toBe('number');
+    expect(typeof run.started_at).toBe('string');
+    expect(run.finished_at).not.toBeNull();
+    expect(run.api_calls).toBe(7);
+    expect(run.deals_found).toBe(3);
+    expect(run.telegram_sent).toBe(1);
+    expect(run.error).toBeNull();
+  });
+
+  it('returns at most 20 rows', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+
+    // Seed 25 runs
+    for (let i = 0; i < 25; i++) {
+      seedScanRun(raw, { deals_found: i });
+    }
+
+    const res = await GET(env, `${BASE}/api/scan/runs`);
+    const body = await res.json<ScanRunRow[]>();
+    expect(body.length).toBeLessThanOrEqual(20);
+    expect(body).toHaveLength(20);
+  });
+
+  it('returns 401 without auth', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/scan/runs`, false);
+    expect(res.status).toBe(401);
   });
 });

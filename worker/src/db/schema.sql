@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS config (
   theme                         TEXT    NOT NULL DEFAULT 'system' CHECK (theme IN ('light','dark','system')),
   accent_color                  TEXT    NOT NULL DEFAULT '#f59e0b',
   density                       TEXT    NOT NULL DEFAULT 'comfortable' CHECK (density IN ('comfortable','compact')),
+  theme_palette                 TEXT    NOT NULL DEFAULT 'cyan',
+  font                          TEXT    NOT NULL DEFAULT 'chakra',
 
   -- Maintenance / data
   deal_retention_days           INTEGER NOT NULL DEFAULT 30,   -- 0 = keep forever

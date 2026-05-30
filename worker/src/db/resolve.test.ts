@@ -38,6 +38,8 @@ const BASE_CONFIG: ConfigRow = {
   theme: 'system',
   accent_color: '#f59e0b',
   density: 'comfortable',
+  theme_palette: 'cyan',
+  font: 'chakra',
   deal_retention_days: 30,
   timezone: 'Asia/Jerusalem',
   updated_at: '2025-01-01T00:00:00Z',

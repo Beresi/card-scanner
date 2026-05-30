@@ -7,6 +7,7 @@ import { configRouter } from './api/config';
 import { watchlistRouter } from './api/watchlist';
 import { dealsRouter } from './api/deals';
 import { resolveRouter } from './api/resolve';
+import { getLatestScanRun } from './db/repo';
 
 // ─── Environment bindings ─────────────────────────────────────────────────────
 // DB        — Cloudflare D1 binding (name "DB" matches wrangler.toml [[d1_databases]])
@@ -54,16 +55,45 @@ app.use('/api/*', async (c, next) => {
 });
 
 // ── GET /api/health ───────────────────────────────────────────────────────────
-// Returns service liveness and timestamp.
+// Returns service liveness, timestamp, DB reachability, and latest scan telemetry.
 // Exposes token *status* only (present/absent) — never the token value itself.
-// Full health detail (latest scan_run, CardTrader token ok) will be added in Phase 1
-// once the scanner and repo helpers exist.
-app.get('/api/health', (c) => {
+// Never 500s: DB errors are caught and surfaced as db_ok:false with null scan fields.
+app.get('/api/health', async (c) => {
+  let db_ok = false;
+  let last_scan_at: string | null = null;
+  let last_scan_finished_at: string | null = null;
+  let last_scan_error: string | null = null;
+  let deals_found: number | null = null;
+  let telegram_sent: number | null = null;
+  let api_calls: number | null = null;
+
+  try {
+    const run = await getLatestScanRun(c.env.DB);
+    db_ok = true;
+    if (run !== null) {
+      last_scan_at = run.started_at;
+      last_scan_finished_at = run.finished_at;
+      last_scan_error = run.error;
+      deals_found = run.deals_found;
+      telegram_sent = run.telegram_sent;
+      api_calls = run.api_calls;
+    }
+  } catch {
+    // DB unreachable — report status, keep ok:true (liveness is separate from DB health)
+    db_ok = false;
+  }
+
   return c.json({
     ok: true,
     service: 'card-broker',
     ts: new Date().toISOString(),
-    // Phase 1 additions: last_scan_at, last_scan_error, cardtrader_token_ok
+    db_ok,
+    last_scan_at,
+    last_scan_finished_at,
+    last_scan_error,
+    deals_found,
+    telegram_sent,
+    api_calls,
   });
 });
 

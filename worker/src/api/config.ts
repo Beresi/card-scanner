@@ -37,6 +37,8 @@ const CONFIG_PATCH_FIELDS = [
   'theme',
   'accent_color',
   'density',
+  'theme_palette',
+  'font',
   'deal_retention_days',
   'timezone',
 ] as const;

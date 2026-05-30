@@ -22,6 +22,7 @@ import type {
   DealInsert,
   DealRow,
   ScanCounts,
+  ScanRunRow,
   ExpansionRow,
   BlueprintRow,
 } from './types';
@@ -87,6 +88,50 @@ export async function closeScanRun(
       id,
     )
     .run();
+}
+
+/**
+ * Read the most recent scan_runs row (by id DESC).
+ *
+ * Returns null when no scan has ever run (empty table).
+ * Used by GET /api/health to surface last-scan telemetry.
+ */
+export async function getLatestScanRun(db: D1Database): Promise<ScanRunRow | null> {
+  return db
+    .prepare(
+      `SELECT id, started_at, finished_at,
+              watch_items_scanned, blueprints_scanned, api_calls,
+              deals_found, telegram_sent, error
+         FROM scan_runs
+        ORDER BY id DESC
+        LIMIT 1`,
+    )
+    .first<ScanRunRow>();
+}
+
+/**
+ * List recent scan_runs rows, newest first.
+ *
+ * Returns up to `limit` rows (default 20).  Used by GET /api/scan/runs for the
+ * Health view history table.
+ */
+export async function listScanRuns(
+  db: D1Database,
+  limit = 20,
+): Promise<ScanRunRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, started_at, finished_at,
+              watch_items_scanned, blueprints_scanned, api_calls,
+              deals_found, telegram_sent, error
+         FROM scan_runs
+        ORDER BY id DESC
+        LIMIT ?`,
+    )
+    .bind(limit)
+    .all<ScanRunRow>();
+
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +337,8 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   'theme',
   'accent_color',
   'density',
+  'theme_palette',
+  'font',
   'deal_retention_days',
   'timezone',
 ]);

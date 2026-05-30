@@ -98,6 +98,8 @@ export interface ConfigRow {
   theme: 'light' | 'dark' | 'system';      // NOT NULL DEFAULT 'system', CHECK constraint
   accent_color: string;                     // NOT NULL DEFAULT '#f59e0b'
   density: 'comfortable' | 'compact';       // NOT NULL DEFAULT 'comfortable', CHECK constraint
+  theme_palette: string;                    // NOT NULL DEFAULT 'cyan'
+  font: string;                             // NOT NULL DEFAULT 'chakra'
 
   // Maintenance / data
   deal_retention_days: number;             // NOT NULL DEFAULT 30
@@ -120,6 +122,25 @@ export interface ScanCounts {
   api_calls: number;
   deals_found: number;
   telegram_sent: number;
+}
+
+/**
+ * Every column in the `scan_runs` table, typed as D1 returns them.
+ *
+ * Used by GET /api/health (latest run) and GET /api/scan/runs (recent history).
+ * `finished_at` and `error` are nullable — a run in progress has no finished_at;
+ * a clean run has no error.  All count columns default to 0 in the schema.
+ */
+export interface ScanRunRow {
+  id: number;
+  started_at: string;           // UTC TEXT
+  finished_at: string | null;   // UTC TEXT, NULL while run is in progress
+  watch_items_scanned: number;
+  blueprints_scanned: number;
+  api_calls: number;
+  deals_found: number;
+  telegram_sent: number;
+  error: string | null;
 }
 
 // ---------------------------------------------------------------------------

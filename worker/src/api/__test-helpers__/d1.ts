@@ -229,6 +229,56 @@ export function seedDeal(
 }
 
 /**
+ * Insert a scan_runs row directly via raw SQL.
+ *
+ * `finished_at` and `error` are optional; if omitted the run appears as "in progress".
+ * Returns the inserted row id.
+ */
+export function seedScanRun(
+  raw: Database.Database,
+  fields: {
+    started_at?: string;
+    finished_at?: string | null;
+    watch_items_scanned?: number;
+    blueprints_scanned?: number;
+    api_calls?: number;
+    deals_found?: number;
+    telegram_sent?: number;
+    error?: string | null;
+  } = {},
+): void {
+  const {
+    started_at = "datetime('now')",
+    finished_at = null,
+    watch_items_scanned = 0,
+    blueprints_scanned = 0,
+    api_calls = 5,
+    deals_found = 3,
+    telegram_sent = 1,
+    error = null,
+  } = fields;
+
+  // Use exec so we can embed datetime() expressions in started_at / finished_at.
+  const startedVal = started_at.startsWith("datetime(") ? started_at : `'${started_at}'`;
+  const finishedVal =
+    finished_at === null
+      ? 'NULL'
+      : finished_at.startsWith("datetime(")
+        ? finished_at
+        : `'${finished_at}'`;
+  const errorVal = error === null ? 'NULL' : `'${error.replace(/'/g, "''")}'`;
+
+  raw.exec(
+    `INSERT INTO scan_runs
+       (started_at, finished_at, watch_items_scanned, blueprints_scanned,
+        api_calls, deals_found, telegram_sent, error)
+     VALUES
+       (${startedVal}, ${finishedVal}, ${watch_items_scanned}, ${blueprints_scanned},
+        ${api_calls}, ${deals_found}, ${telegram_sent}, ${errorVal})`,
+  );
+}
+
+/**
  * Insert a minimal watchlist row directly.  Returns the inserted id via
  * better-sqlite3's lastInsertRowid.
  */
