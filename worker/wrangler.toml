@@ -3,12 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
 # ---------------------------------------------------------------------------
-# Cron trigger — hourly, top of the hour, UTC.
-# The scheduled() handler and POST /api/scan/run-now share the same runScan()
-# code path — never fork the logic.
+# Cron trigger — every 2 minutes.
+#
+# Chunked mode (default) scans a rotating batch of ~40 individual blueprints
+# per tick, so frequent ticks are needed for throughput across large sets.
+# Wholeset mode self-throttles: a cron tick that fires within ~55 min of the
+# last finished scan is skipped with no error, so the effective cadence stays
+# ~hourly even at a 2-min cron interval.
+# run-now (POST /api/scan/run-now) always runs regardless of mode or interval.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["0 * * * *"]
+crons = ["*/2 * * * *"]
 
 # ---------------------------------------------------------------------------
 # D1 database binding.

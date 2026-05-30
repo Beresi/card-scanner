@@ -344,6 +344,9 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   'font',
   'deal_retention_days',
   'timezone',
+  // Scan mode (migration 0003)
+  'scan_mode',
+  'scan_batch_size',
 ]);
 
 /**
@@ -899,7 +902,7 @@ export async function searchBlueprints(
   const like = `%${q}%`;
   const { results } = await db
     .prepare(
-      `SELECT id, expansion_id, name, image_url
+      `SELECT id, expansion_id, name, image_url, last_scanned_at
          FROM blueprints
         WHERE expansion_id = ? AND name LIKE ?
         ORDER BY name
@@ -909,4 +912,108 @@ export async function searchBlueprints(
     .all<BlueprintRow>();
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Chunked-scan rotation helpers (migration 0003)
+// ---------------------------------------------------------------------------
+
+/**
+ * Select the next batch of blueprints to scan from the given expansion ids,
+ * ordered by rotation cursor (never scanned first, then oldest-scanned first).
+ *
+ * The rotation order is:
+ *   1. NULL last_scanned_at first (never scanned) — SQLite sorts NULLs LAST on
+ *      ASC by default, so we flip with `(last_scanned_at IS NULL) DESC`.
+ *   2. Oldest last_scanned_at ASC.
+ *   3. Tie-break by id ASC for stability.
+ *
+ * Bound placeholders are used for ALL values — no string interpolation.
+ * The IN-list size scales with the number of active expansion IDs passed in.
+ *
+ * Returns up to `limit` rows; the caller should cap `limit` to the remaining
+ * budget after blueprint-type items have been scanned.
+ */
+export async function selectBlueprintsToScan(
+  db: D1Database,
+  expansionIds: number[],
+  limit: number,
+): Promise<{ id: number; expansion_id: number }[]> {
+  if (expansionIds.length === 0 || limit <= 0) { return []; }
+
+  const placeholders = expansionIds.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT id, expansion_id
+         FROM blueprints
+        WHERE expansion_id IN (${placeholders})
+        ORDER BY (last_scanned_at IS NULL) DESC,
+                 last_scanned_at ASC,
+                 id ASC
+        LIMIT ?`,
+    )
+    .bind(...expansionIds, limit)
+    .all<{ id: number; expansion_id: number }>();
+
+  return results;
+}
+
+/** Chunk size for markBlueprintsScanned batch operations. */
+const MARK_SCANNED_CHUNK_SIZE = 100;
+
+/**
+ * Advance the rotation cursor for a batch of blueprints.
+ *
+ * Sets `last_scanned_at = datetime('now')` for every id in the list.
+ * Chunked into groups of `MARK_SCANNED_CHUNK_SIZE` to stay within D1's
+ * per-request statement limit.
+ *
+ * This is called AFTER each scan attempt (success or no-deal) so the rotation
+ * advances even when a blueprint produces no deal.  A fetch ERROR does NOT
+ * prevent marking — forward progress is more important than retrying one bad
+ * blueprint on the next run (callers may choose to skip marking on error;
+ * the scanner marks on attempt for simplicity).
+ */
+export async function markBlueprintsScanned(
+  db: D1Database,
+  ids: number[],
+): Promise<void> {
+  if (ids.length === 0) { return; }
+
+  for (let offset = 0; offset < ids.length; offset += MARK_SCANNED_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + MARK_SCANNED_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(', ');
+    await db
+      .prepare(
+        `UPDATE blueprints
+            SET last_scanned_at = datetime('now')
+          WHERE id IN (${placeholders})`,
+      )
+      .bind(...chunk)
+      .run();
+  }
+}
+
+/**
+ * Return the `finished_at` timestamp of the most recent FINISHED scan run.
+ *
+ * Returns null when:
+ *  - No scans have ever run.
+ *  - No scan has finished yet (all rows have `finished_at IS NULL`).
+ *
+ * Used by the wholeset self-throttle: if the last finished scan was less than
+ * ~55 minutes ago AND the trigger is 'cron', the run is skipped.
+ */
+export async function getLatestFinishedScanAt(db: D1Database): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT finished_at
+         FROM scan_runs
+        WHERE finished_at IS NOT NULL
+        ORDER BY id DESC
+        LIMIT 1`,
+    )
+    .first<{ finished_at: string }>();
+
+  return row?.finished_at ?? null;
 }

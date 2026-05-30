@@ -106,6 +106,14 @@ CREATE TABLE IF NOT EXISTS config (
   min_price_cents               INTEGER NOT NULL DEFAULT 200,  -- candidate must cost ≥ $2.00
   min_savings_cents             INTEGER NOT NULL DEFAULT 100,  -- baseline − candidate must be ≥ $1.00
 
+  -- Scan mode (PRD §11 / migration 0003)
+  -- 'chunked'  (default) — free-tier safe; rotates a batch of per-card calls each tick.
+  -- 'wholeset' (paid fallback) — one big expansion call per item, self-throttled to ~hourly.
+  scan_mode                     TEXT    NOT NULL DEFAULT 'chunked',
+  -- Max per-card marketplace fetches per chunked run. Default 40 fits inside the free-tier
+  -- 50-subrequest cap with headroom for /info + blueprintsExport warm-up calls.
+  scan_batch_size               INTEGER NOT NULL DEFAULT 40,
+
   -- Maintenance / data
   deal_retention_days           INTEGER NOT NULL DEFAULT 30,   -- 0 = keep forever
   timezone                      TEXT             DEFAULT 'Asia/Jerusalem',
@@ -136,16 +144,19 @@ CREATE TABLE IF NOT EXISTS expansions (
 );
 
 CREATE TABLE IF NOT EXISTS blueprints (
-  id           INTEGER PRIMARY KEY,                   -- cardtrader blueprint id
-  expansion_id INTEGER,
-  name         TEXT,
-  scryfall_id  TEXT,
-  image_url    TEXT,
-  synced_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  id             INTEGER PRIMARY KEY,                   -- cardtrader blueprint id
+  expansion_id   INTEGER,
+  name           TEXT,
+  scryfall_id    TEXT,
+  image_url      TEXT,
+  synced_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  last_scanned_at TEXT                                  -- NULL = never scanned (chunked mode cursor)
 );
 
 CREATE INDEX IF NOT EXISTS idx_blueprints_exp  ON blueprints(expansion_id);
 CREATE INDEX IF NOT EXISTS idx_blueprints_name ON blueprints(name);
+-- Rotation index for chunked scan: ORDER BY (last_scanned_at IS NULL) DESC, last_scanned_at ASC
+CREATE INDEX IF NOT EXISTS idx_blueprints_exp_scanned ON blueprints(expansion_id, last_scanned_at);
 
 -- ─── Config seed ─────────────────────────────────────────────────────────────
 -- The config table enforces CHECK (id = 1) — exactly one row exists, always.

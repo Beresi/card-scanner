@@ -108,6 +108,10 @@ export interface ConfigRow {
   min_price_cents: number;                 // NOT NULL DEFAULT 200
   min_savings_cents: number;               // NOT NULL DEFAULT 100
 
+  // Scan mode (migration 0003)
+  scan_mode: string;                       // NOT NULL DEFAULT 'chunked' | 'wholeset'
+  scan_batch_size: number;                 // NOT NULL DEFAULT 40
+
   // Maintenance / data
   deal_retention_days: number;             // NOT NULL DEFAULT 30
   timezone: string | null;                 // nullable DEFAULT 'Asia/Jerusalem'
@@ -321,11 +325,13 @@ export interface ExpansionRow {
 
 /**
  * Row shape for the `blueprints` cache table.
- * Used by `searchBlueprints` and the add-card UX.
+ * Used by `searchBlueprints`, the add-card UX, and the chunked scan rotation.
  */
 export interface BlueprintRow {
   id: number;
   expansion_id: number | null;
   name: string | null;
   image_url: string | null;
+  /** UTC timestamp of last chunked-mode scan attempt; NULL = never scanned. */
+  last_scanned_at: string | null;
 }

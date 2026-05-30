@@ -45,6 +45,8 @@ const BASE_CONFIG: ConfigRow = {
   font: 'chakra',
   deal_retention_days: 30,
   timezone: 'Asia/Jerusalem',
+  scan_mode: 'chunked',
+  scan_batch_size: 40,
   updated_at: '2025-01-01T00:00:00Z',
 };
 
