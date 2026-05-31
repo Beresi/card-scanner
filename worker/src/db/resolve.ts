@@ -30,13 +30,13 @@ export function resolveEffective(
   config: ConfigRow,
 ): EffectiveSettings {
   return {
-    // min_condition: NOT NULL in schema (always set), but typed as `string`
-    // on WatchlistRow because D1 returns raw text. Cast to Condition here;
-    // the CHECK constraint guarantees the value is valid.
-    min_condition: ticket.min_condition as Condition,
+    // min_condition: §9a nullable override — NULL → inherit config.default_min_condition.
+    // Uses `??` so that an explicit value (even an unusual one) is always honored.
+    min_condition: (ticket.min_condition ?? config.default_min_condition) as Condition,
 
-    // foil_pref: NOT NULL — no config fallback.
-    foil_pref: ticket.foil_pref,
+    // foil_pref: §9a nullable override — NULL → inherit config.new_ticket_foil_pref.
+    // Uses `??` so that any explicit FoilPref value is always honored.
+    foil_pref: ticket.foil_pref ?? config.new_ticket_foil_pref,
 
     // allow_graded: NOT NULL 0/1 — convert to boolean.
     allow_graded: ticket.allow_graded === 1,
@@ -52,11 +52,13 @@ export function resolveEffective(
     min_price_cents: config.min_price_cents,
     min_savings_cents: config.min_savings_cents,
 
-    // importance: NOT NULL — no config fallback.
-    importance: ticket.importance,
+    // importance: §9a nullable override — NULL → inherit config.new_ticket_importance.
+    // Uses `??` so that an explicit Importance value is always honored.
+    importance: ticket.importance ?? config.new_ticket_importance,
 
-    // telegram_enabled: NOT NULL 0/1 — convert to boolean.
-    telegram_enabled: ticket.telegram_enabled === 1,
+    // telegram_enabled: §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled.
+    // Uses `??` (NOT `||`) so that an explicit 0 ("never notify") is always honored.
+    telegram_enabled: (ticket.telegram_enabled ?? config.new_ticket_telegram_enabled) === 1,
 
     // telegram_min_discount_pct: nullable override — NULL → inherit config global.
     telegram_min_discount_pct:

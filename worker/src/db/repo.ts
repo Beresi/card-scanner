@@ -434,6 +434,7 @@ const WATCHLIST_PATCHABLE_COLS = new Set<string>([
  *   fallback; NULL means "no cap / no floor", not "inherit".
  * - `expansion_filter` and `card_name_norm`: not §9a inheritance; card identity
  *   columns that shouldn't be wiped via reset.
+ * - `allow_graded`: NOT NULL, no UI reset offered.
  */
 const WATCHLIST_RESETTABLE_COLS = new Set<string>([
   'threshold_pct',
@@ -441,6 +442,11 @@ const WATCHLIST_RESETTABLE_COLS = new Set<string>([
   // §9a nullable overrides with config fallback (migration 0005)
   'detection_mode',
   'max_price_cents',
+  // §9a nullable overrides with config fallback (migration 0006)
+  'min_condition',
+  'foil_pref',
+  'importance',
+  'telegram_enabled',
 ]);
 
 /**

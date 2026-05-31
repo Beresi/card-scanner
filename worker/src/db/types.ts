@@ -42,16 +42,18 @@ export type DetectionMode = 'discount' | 'price';
  *
  * Nullability matches `schema.sql` exactly:
  *  - `threshold_pct`, `telegram_min_discount_pct`, `telegram_max_price_cents`,
- *    `telegram_min_savings_cents`, `detection_mode`, `max_price_cents` are nullable
+ *    `telegram_min_savings_cents`, `detection_mode`, `max_price_cents`,
+ *    `min_condition`, `foil_pref`, `importance`, `telegram_enabled` are nullable
  *    override columns (no `NOT NULL` in the DDL). NULL means "inherit from config
  *    at scan time" (§9a).
  *  - `card_name_norm` and `expansion_filter` are nullable; only populated for
  *    `type='card'` items.
  *  - `cardtrader_id` is nullable — card-type items have no CardTrader blueprint/
  *    expansion id.
- *  - All other columns are `NOT NULL DEFAULT` — they are always present.
- *  - Boolean columns (`allow_graded`, `telegram_enabled`, `active`) are stored as
- *    `0 | 1`; the repo converts them to real booleans at its boundary.
+ *  - `allow_graded` and `active` are `NOT NULL DEFAULT` — always present.
+ *  - Boolean columns (`allow_graded`, `active`) are stored as `0 | 1`; nullable
+ *    boolean columns (`telegram_enabled`) are stored as `0 | 1 | null`; the repo
+ *    converts `0 | 1` to real booleans at its boundary.
  */
 export interface WatchlistRow {
   id: number;
@@ -59,12 +61,12 @@ export interface WatchlistRow {
   cardtrader_id: number | null;               // blueprint_id or expansion_id; NULL for type='card'
   label: string;
   game_id: number;
-  min_condition: string;           // NOT NULL DEFAULT 'Near Mint'
-  foil_pref: FoilPref;             // NOT NULL DEFAULT 'any', CHECK constraint
+  min_condition: string | null;     // §9a nullable override — NULL → inherit config.default_min_condition
+  foil_pref: FoilPref | null;      // §9a nullable override — NULL → inherit config.new_ticket_foil_pref
   allow_graded: 0 | 1;             // NOT NULL DEFAULT 0
   threshold_pct: number | null;    // nullable — NULL → inherit config.default_threshold_pct
-  importance: Importance;          // NOT NULL DEFAULT 'normal', CHECK constraint
-  telegram_enabled: 0 | 1;        // NOT NULL DEFAULT 0
+  importance: Importance | null;   // §9a nullable override — NULL → inherit config.new_ticket_importance
+  telegram_enabled: 0 | 1 | null; // §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled
   telegram_min_discount_pct: number | null;  // nullable — NULL → inherit config.telegram_min_discount_pct
   telegram_max_price_cents: number | null;   // nullable — NULL → no cap (no config fallback)
   telegram_min_savings_cents: number | null; // nullable — NULL → no floor (no config fallback)

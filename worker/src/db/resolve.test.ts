@@ -10,6 +10,11 @@
  *     null (no config fallback).
  *  5. 0/1 boolean columns (allow_graded, telegram_enabled) convert to real
  *     booleans.
+ *  6. min_condition NULL → inherits config.default_min_condition.
+ *  7. foil_pref NULL → inherits config.new_ticket_foil_pref.
+ *  8. importance NULL → inherits config.new_ticket_importance.
+ *  9. telegram_enabled NULL → inherits config.new_ticket_telegram_enabled;
+ *     explicit 0 is honored (proves `??` not `||`).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -56,19 +61,19 @@ const BASE_CONFIG: ConfigRow = {
   updated_at: '2025-01-01T00:00:00Z',
 };
 
-/** Minimal valid WatchlistRow — all override columns NULL (born inheriting). */
+/** Minimal valid WatchlistRow — all §9a override columns NULL (born inheriting). */
 const INHERITING_TICKET: WatchlistRow = {
   id: 1,
   type: 'blueprint',
   cardtrader_id: 100,
   label: 'Black Lotus',
   game_id: 1,
-  min_condition: 'Near Mint',
-  foil_pref: 'any',
+  min_condition: null,                    // §9a nullable override (migration 0006) — NULL
+  foil_pref: null,                        // §9a nullable override (migration 0006) — NULL
   allow_graded: 0,
   threshold_pct: null,                    // nullable override — NULL
-  importance: 'normal',
-  telegram_enabled: 0,
+  importance: null,                       // §9a nullable override (migration 0006) — NULL
+  telegram_enabled: null,                 // §9a nullable override (migration 0006) — NULL
   telegram_min_discount_pct: null,        // nullable override — NULL
   telegram_max_price_cents: null,         // nullable, no config fallback
   telegram_min_savings_cents: null,       // nullable, no config fallback
@@ -218,25 +223,25 @@ describe('resolveEffective — config-only fields', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. NOT NULL columns pass through from ticket (no config fallback)
+// 7. Explicit §9a override values pass through from ticket (sticky when set)
 // ---------------------------------------------------------------------------
 
-describe('resolveEffective — NOT NULL ticket columns pass through', () => {
-  it('min_condition comes from ticket (cast to Condition)', () => {
+describe('resolveEffective — explicit ticket override values are sticky', () => {
+  it('explicit min_condition overrides config default', () => {
     const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'Slightly Played' };
-    const result = resolveEffective(ticket, BASE_CONFIG);
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'Near Mint'
     expect(result.min_condition).toBe('Slightly Played');
   });
 
-  it('foil_pref comes from ticket', () => {
+  it('explicit foil_pref overrides config default', () => {
     const ticket: WatchlistRow = { ...INHERITING_TICKET, foil_pref: 'foil' };
-    const result = resolveEffective(ticket, BASE_CONFIG);
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'any'
     expect(result.foil_pref).toBe('foil');
   });
 
-  it('importance comes from ticket', () => {
+  it('explicit importance overrides config default', () => {
     const ticket: WatchlistRow = { ...INHERITING_TICKET, importance: 'high' };
-    const result = resolveEffective(ticket, BASE_CONFIG);
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'normal'
     expect(result.importance).toBe('high');
   });
 });
@@ -339,5 +344,118 @@ describe('resolveEffective — max_price_cents inheritance (migration 0005)', ()
     const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_max_price_cents: 500 };
     const result = resolveEffective(ticket, updatedConfig);
     expect(result.max_price_cents).toBe(999); // integer cents
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11. min_condition inheritance (migration 0006)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — min_condition inheritance (migration 0006)', () => {
+  it('NULL on ticket → inherits config.default_min_condition', () => {
+    // INHERITING_TICKET.min_condition = null; BASE_CONFIG.default_min_condition = 'Near Mint'
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.min_condition).toBe('Near Mint');
+  });
+
+  it('reflects a config change to default_min_condition — moving baseline', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_min_condition: 'Slightly Played' };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.min_condition).toBe('Slightly Played');
+  });
+
+  it('explicit ticket min_condition is sticky — overrides config default', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'Good (Lightly Played)' };
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'Near Mint'
+    expect(result.min_condition).toBe('Good (Lightly Played)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. foil_pref inheritance (migration 0006)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — foil_pref inheritance (migration 0006)', () => {
+  it('NULL on ticket → inherits config.new_ticket_foil_pref', () => {
+    // INHERITING_TICKET.foil_pref = null; BASE_CONFIG.new_ticket_foil_pref = 'any'
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.foil_pref).toBe('any');
+  });
+
+  it('reflects a config change to new_ticket_foil_pref — moving baseline', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, new_ticket_foil_pref: 'foil' };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.foil_pref).toBe('foil');
+  });
+
+  it("explicit ticket foil_pref 'nonfoil' is sticky — overrides config default", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, foil_pref: 'nonfoil' };
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'any'
+    expect(result.foil_pref).toBe('nonfoil');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13. importance inheritance (migration 0006)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — importance inheritance (migration 0006)', () => {
+  it('NULL on ticket → inherits config.new_ticket_importance', () => {
+    // INHERITING_TICKET.importance = null; BASE_CONFIG.new_ticket_importance = 'normal'
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.importance).toBe('normal');
+  });
+
+  it('reflects a config change to new_ticket_importance — moving baseline', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, new_ticket_importance: 'high' };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.importance).toBe('high');
+  });
+
+  it("explicit ticket importance 'high' is sticky — overrides config default", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, importance: 'high' };
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'normal'
+    expect(result.importance).toBe('high');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 14. telegram_enabled inheritance (migration 0006)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — telegram_enabled inheritance (migration 0006)', () => {
+  it('NULL on ticket → inherits config.new_ticket_telegram_enabled (0 = false)', () => {
+    // INHERITING_TICKET.telegram_enabled = null; BASE_CONFIG.new_ticket_telegram_enabled = 0
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.telegram_enabled).toBe(false);
+    expect(typeof result.telegram_enabled).toBe('boolean');
+  });
+
+  it('reflects a config change to new_ticket_telegram_enabled = 1 — moving baseline', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, new_ticket_telegram_enabled: 1 };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.telegram_enabled).toBe(true);
+  });
+
+  it('explicit telegram_enabled = 0 is honored — NOT treated as missing (proves ??)', () => {
+    // If `||` were used instead of `??`, 0 would be falsy and fall through to config.
+    // With `??`, 0 is a valid explicit value (meaning "never notify") and must be honored.
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, telegram_enabled: 0 };
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, new_ticket_telegram_enabled: 1 };
+    const result = resolveEffective(ticket, updatedConfig);
+    expect(result.telegram_enabled).toBe(false); // 0 is sticky, not overridden by config=1
+  });
+
+  it('explicit telegram_enabled = 1 is sticky — overrides config default 0', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, telegram_enabled: 1 };
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 0
+    expect(result.telegram_enabled).toBe(true);
+  });
+
+  it('explicit telegram_enabled = 1 converts to boolean true', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, telegram_enabled: 1 };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.telegram_enabled).toBe(true);
+    expect(typeof result.telegram_enabled).toBe('boolean');
   });
 });

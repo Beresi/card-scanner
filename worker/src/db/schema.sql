@@ -7,11 +7,13 @@
 
 -- What to scan.
 -- Per-ticket override columns (threshold_pct, telegram_*, detection_mode,
--- max_price_cents) are NULL = inherit from config at scan time. See §9a and
--- resolveEffective(). New tickets keep these NULL; the new-ticket form is
--- pre-filled from config.new_ticket_* / config.default_* for display only.
+-- max_price_cents, min_condition, foil_pref, importance, telegram_enabled)
+-- are NULL = inherit from config at scan time. See §9a and resolveEffective().
+-- New tickets keep these NULL; the new-ticket form is pre-filled from
+-- config.new_ticket_* / config.default_* for display only.
 -- type='card' items watch a card by name across sets; cardtrader_id is NULL
 -- for those rows.  expansion_filter is a JSON int array (NULL/[] = all sets).
+-- allow_graded is NOT NULL (no UI reset offered; not a §9a inheritable column).
 CREATE TABLE IF NOT EXISTS watchlist (
   id                          INTEGER PRIMARY KEY AUTOINCREMENT,
   -- 'card' = watch by name across sets (cardtrader_id = NULL for these rows)
@@ -19,12 +21,16 @@ CREATE TABLE IF NOT EXISTS watchlist (
   cardtrader_id               INTEGER,                   -- blueprint_id or expansion_id; NULL for type='card'
   label                       TEXT    NOT NULL,          -- card or set name for display
   game_id                     INTEGER NOT NULL DEFAULT 1,
-  min_condition               TEXT    NOT NULL DEFAULT 'Near Mint',
-  foil_pref                   TEXT    NOT NULL DEFAULT 'any' CHECK (foil_pref IN ('any','foil','nonfoil')),
+  -- §9a nullable override — NULL → inherit config.default_min_condition at scan time
+  min_condition               TEXT,
+  -- §9a nullable override — NULL → inherit config.new_ticket_foil_pref at scan time
+  foil_pref                   TEXT    CHECK (foil_pref IN ('any','foil','nonfoil')),
   allow_graded                INTEGER NOT NULL DEFAULT 0,
   threshold_pct               INTEGER,                   -- NULL → use config.default_threshold_pct
-  importance                  TEXT    NOT NULL DEFAULT 'normal' CHECK (importance IN ('high','normal')),
-  telegram_enabled            INTEGER NOT NULL DEFAULT 0,
+  -- §9a nullable override — NULL → inherit config.new_ticket_importance at scan time
+  importance                  TEXT    CHECK (importance IN ('high','normal')),
+  -- §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled at scan time
+  telegram_enabled            INTEGER,
   telegram_min_discount_pct   INTEGER,                   -- NULL → use config.telegram_min_discount_pct
   telegram_max_price_cents    INTEGER,                   -- NULL → no cap
   telegram_min_savings_cents  INTEGER,                   -- NULL → no floor
