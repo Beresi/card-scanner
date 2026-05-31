@@ -17,7 +17,7 @@
  */
 
 import type { Condition } from '../scan/conditions';
-import type { WatchlistRow, ConfigRow, EffectiveSettings } from './types';
+import type { WatchlistRow, ConfigRow, EffectiveSettings, DetectionMode } from './types';
 
 /**
  * Resolve the effective settings for a single watchlist ticket.
@@ -69,5 +69,13 @@ export function resolveEffective(
     // telegram_min_savings_cents: nullable, no config fallback.
     // null = no savings floor; an explicit 0 means any positive savings qualifies.
     telegram_min_savings_cents: ticket.telegram_min_savings_cents,
+
+    // detection_mode: nullable override — NULL → inherit config default.
+    // Uses `??` so that an explicit value is always honored (migration 0005).
+    detection_mode: (ticket.detection_mode ?? config.default_detection_mode) as DetectionMode,
+
+    // max_price_cents: nullable override — NULL → inherit config default.
+    // null = no absolute price cap; an explicit 0 would mean "never eligible".
+    max_price_cents: ticket.max_price_cents ?? config.default_max_price_cents,
   };
 }

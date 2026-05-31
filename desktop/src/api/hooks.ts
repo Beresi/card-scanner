@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createWatchItem,
   deleteWatchItem,
+  getCatalogProgress,
   getConfig,
   getDeals,
   getHealth,
   getResolveBlueprints,
+  getResolveCards,
   getResolveExpansions,
   getScanRuns,
   getWatchlist,
@@ -16,7 +18,7 @@ import {
   resetWatchField,
   runScanNow,
 } from './client';
-import type { Config, Deal, Health, ResolveBlueprint, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
+import type { CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
 
 // ---------------------------------------------------------------------------
 // Filter shape — used by the Deal Feed command bar
@@ -177,12 +179,15 @@ export function useCreateWatchItem() {
 /**
  * usePatchWatchItem — PATCH /api/watchlist/:id.
  *
- * Send only the changed fields (partial patch). Invalidates ['watchlist'].
+ * Send only the changed fields (partial patch). Uses WatchItemPatch so
+ * expansion_filter can be passed as number[] | null, and detection_mode /
+ * max_price_cents can be passed as null to reset them to inherit (§9a).
+ * Invalidates ['watchlist'].
  */
 export function usePatchWatchItem() {
   const qc = useQueryClient();
-  return useMutation<WatchItem, Error, { id: number; patch: Partial<WatchItem> }>({
-    mutationFn: ({ id, patch }) => patchWatchItem(id, patch),
+  return useMutation<WatchItem, Error, { id: number; patch: WatchItemPatch }>({
+    mutationFn: ({ id, patch }) => patchWatchItem(id, patch as Partial<WatchItem>),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['watchlist'] });
     },
@@ -262,6 +267,43 @@ export function useResolveBlueprints(expansionId: number | null, q: string) {
     queryFn: () => getResolveBlueprints(expansionId!, q),
     enabled: expansionId !== null && q.trim().length >= 2,
     staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * useResolveCards — search the local blueprint catalog for card names.
+ *
+ * Query key: ['resolve', 'cards', q]
+ * Enabled only when q has at least 2 non-space chars (server returns [] below that).
+ * staleTime: 5 min — the catalog grows slowly between cron runs; no need to re-hit
+ * on every keystroke mount/unmount cycle.
+ *
+ * Returns distinct card-name rows ({name, printings, sets}) from the cached blueprints
+ * table. Never hits CardTrader; never 502. Empty while the catalog is still syncing.
+ */
+export function useResolveCards(q: string) {
+  return useQuery<ResolveCard[], Error>({
+    queryKey: ['resolve', 'cards', q] as const,
+    queryFn: () => getResolveCards(q),
+    enabled: q.trim().length >= 2,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * useCatalogProgress — polls GET /api/resolve/catalog-progress.
+ *
+ * Returns {total, synced} so Settings and the AddFlow modal can show
+ * "matching against N of M sets synced." The catalog grows one set per cron run
+ * when sync is enabled, so a 30s poll is frequent enough to feel live without
+ * hammering the Worker.
+ */
+export function useCatalogProgress() {
+  return useQuery<CatalogProgress, Error>({
+    queryKey: ['catalogProgress'] as const,
+    queryFn: getCatalogProgress,
+    refetchInterval: 30_000,
+    staleTime: 25_000,
   });
 }
 

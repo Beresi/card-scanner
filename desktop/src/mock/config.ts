@@ -41,6 +41,14 @@ export const MOCK_CONFIG: Config = {
   scan_mode: 'chunked',
   scan_batch_size: 40,
 
+  // Detection mode defaults
+  default_detection_mode: 'discount',
+  default_max_price_cents: null,
+
+  // Catalog sync
+  catalog_sync_enabled: 0,
+  catalog_max_exports_per_run: 1,
+
   // Maintenance
   deal_retention_days: 30,
   timezone: 'Asia/Jerusalem',

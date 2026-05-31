@@ -1,10 +1,10 @@
 /**
- * AddFlow — modal for adding a card (blueprint) or a whole set (expansion)
- * to the watchlist.
+ * AddFlow — modal for adding a card (blueprint), a whole set (expansion), or a
+ * card by name across all printings (card-type) to the watchlist.
  *
  * Wave 2 implementation: search-as-you-type via the /api/resolve endpoints.
  *
- * Two modes (Segmented toggle, default "card"):
+ * Three modes (Segmented toggle):
  *
  *   Watch a card (blueprint mode):
  *     Step 1 — search expansions by name; pick one (stored as chosenExpansion).
@@ -17,6 +17,14 @@
  *     Single-step — search expansions by name; click a result
  *     → POST /api/watchlist { type:'expansion', cardtrader_id: exp.id,
  *       label: exp.name, game_id: 1 } → close + select.
+ *
+ *   Card — any printing (card mode):
+ *     Step 1 — search card names via useResolveCards; pick a name.
+ *     Optional — restrict to specific sets: add one or more expansions via chip
+ *                list; empty list = all sets.
+ *     Shows catalog-sync progress from useCatalogProgress when not fully synced.
+ *     → POST /api/watchlist { type:'card', card_name, expansion_filter?: number[] }
+ *       → close + select.
  *
  * Both searches debounce ~300 ms so the query key only changes after typing settles.
  * The enabled-gate (q.trim().length >= 2) is respected by the hooks — no request fires
@@ -35,6 +43,10 @@
  * on the first request (~1-2s). Subsequent queries hit the cache and are fast. The UI
  * shows "Searching…" during this initial fetch, which is the correct affordance.
  *
+ * Catalog-sync note: card-name results come from the local blueprint catalog, which
+ * fills in over time (one set per cron run when catalog_sync_enabled). When not fully
+ * synced, a note explains that coverage grows as the catalog fills.
+ *
  * A11y:
  *   - Search inputs are labeled (aria-label or associated <label>).
  *   - Results are <button> elements — keyboard reachable, activatable with Enter/Space.
@@ -46,11 +58,13 @@
 import { useEffect, useState } from 'react';
 
 import {
+  useCatalogProgress,
   useCreateWatchItem,
   useResolveBlueprints,
+  useResolveCards,
   useResolveExpansions,
 } from '../../api/hooks';
-import type { ResolveBlueprint, ResolveExpansion } from '../../api/types';
+import type { ResolveBlueprint, ResolveCard, ResolveExpansion } from '../../api/types';
 import { ApiError } from '../../api/client';
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
@@ -63,7 +77,7 @@ export interface AddFlowProps {
   onClose: () => void;
 }
 
-type AddMode = 'card' | 'set';
+type AddMode = 'card' | 'set' | 'anycard';
 
 const MODAL_TITLE_ID = 'addflow-title';
 const DEBOUNCE_MS = 300;
@@ -166,6 +180,8 @@ interface ExpansionResultsProps {
   onPick: (exp: ResolveExpansion) => void;
   /** If true, clicking picks the expansion for step-1 of card mode; label changes accordingly */
   pickLabel: string;
+  /** Optional: ids to exclude from results (already-added set filters) */
+  excludeIds?: number[];
 }
 
 function ExpansionResults({
@@ -177,10 +193,10 @@ function ExpansionResults({
   data,
   onPick,
   pickLabel,
+  excludeIds = [],
 }: ExpansionResultsProps) {
   const enabled = debouncedQ.trim().length >= 2;
 
-  // Still typing / not enough chars
   if (!enabled) {
     return (
       <p className="addflow-none cb-mono">
@@ -189,8 +205,6 @@ function ExpansionResults({
     );
   }
 
-  // Debounce in-flight: q changed but debouncedQ hasn't settled to the new q yet
-  // (or query is fetching)
   if (isPending) {
     return <p className="addflow-none cb-mono">Searching…</p>;
   }
@@ -203,13 +217,15 @@ function ExpansionResults({
     );
   }
 
-  if (!data || data.length === 0) {
+  const filtered = (data ?? []).filter((exp) => !excludeIds.includes(exp.id));
+
+  if (filtered.length === 0) {
     return <p className="addflow-none cb-mono">No matches for &ldquo;{debouncedQ}&rdquo;.</p>;
   }
 
   return (
     <div className="addflow-results" role="listbox" aria-label="Expansion results">
-      {data.map((exp) => (
+      {filtered.map((exp) => (
         <button
           key={exp.id}
           type="button"
@@ -309,6 +325,138 @@ function BlueprintResults({
 }
 
 // ---------------------------------------------------------------------------
+// CardNameResults — renders the card-name search results for the any-printing mode
+// ---------------------------------------------------------------------------
+interface CardNameResultsProps {
+  q: string;
+  debouncedQ: string;
+  isPending: boolean;
+  isError: boolean;
+  error: Error | null;
+  data: ResolveCard[] | undefined;
+  onPick: (card: ResolveCard) => void;
+}
+
+function CardNameResults({
+  q,
+  debouncedQ,
+  isPending,
+  isError,
+  error,
+  data,
+  onPick,
+}: CardNameResultsProps) {
+  const enabled = debouncedQ.trim().length >= 2;
+
+  if (!enabled) {
+    return (
+      <p className="addflow-none cb-mono">
+        {q.trim().length > 0 ? 'Keep typing…' : 'Type a card name to search the catalog.'}
+      </p>
+    );
+  }
+
+  if (isPending) {
+    return <p className="addflow-none cb-mono">Searching…</p>;
+  }
+
+  if (isError && error) {
+    return (
+      <p className="addflow-none cb-mono" style={{ color: 'var(--bad)' }} role="alert">
+        {error.message}
+      </p>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <p className="addflow-none cb-mono">
+        No cards matching &ldquo;{debouncedQ}&rdquo; in the synced catalog.
+      </p>
+    );
+  }
+
+  return (
+    <div className="addflow-results" role="listbox" aria-label="Card name results">
+      {data.map((card) => (
+        <button
+          key={card.name}
+          type="button"
+          className="addflow-opt"
+          role="option"
+          aria-selected={false}
+          onClick={() => onPick(card)}
+        >
+          <span className="addflow-opt-name">{card.name}</span>
+          <span className="cb-mono" style={{ fontSize: '10px', color: 'var(--text-dim)', flexShrink: 0 }}>
+            {card.printings} printing{card.printings !== 1 ? 's' : ''} · {card.sets} set{card.sets !== 1 ? 's' : ''}
+          </span>
+          <span className="addflow-opt-add cb-mono" style={{ fontSize: '10px', color: 'var(--accent)', flexShrink: 0 }}>
+            + watch
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SetChips — small chip list of chosen expansion_id restrictions (any-printing mode)
+// ---------------------------------------------------------------------------
+interface SetChipsProps {
+  ids: number[];
+  names: Record<number, string>;
+  onRemove: (id: number) => void;
+}
+
+function SetChips({ ids, names, onRemove }: SetChipsProps) {
+  if (ids.length === 0) return null;
+  return (
+    <div
+      style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
+      aria-label="Selected set restrictions"
+    >
+      {ids.map((id) => (
+        <span
+          key={id}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '2px 8px',
+            background: 'var(--accent-soft)',
+            border: '1px solid color-mix(in oklab, var(--accent) 30%, transparent)',
+            borderRadius: 'var(--radius)',
+            fontSize: 11,
+            fontFamily: 'var(--f-mono)',
+            color: 'var(--text)',
+          }}
+        >
+          {names[id] ?? `#${id}`}
+          <button
+            type="button"
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              color: 'var(--text-dim)',
+              lineHeight: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+            }}
+            aria-label={`Remove set ${names[id] ?? id}`}
+            onClick={() => onRemove(id)}
+          >
+            <Icon name="x" size={10} />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ManualFallback — collapsible paste-id section (Wave-1 power-user path)
 // ---------------------------------------------------------------------------
 interface ManualFallbackProps {
@@ -325,6 +473,9 @@ function ManualFallback({ mode, onSubmit, isPending, isError, errorMsg }: Manual
   const [label, setLabel] = useState('');
   const [idErr, setIdErr] = useState<string | null>(null);
   const [lblErr, setLblErr] = useState<string | null>(null);
+
+  // Manual fallback only applies to blueprint / expansion modes (need a cardtrader_id)
+  if (mode === 'anycard') return null;
 
   const modeLabel = mode === 'card' ? 'blueprint' : 'expansion';
   const idPlaceholder =
@@ -436,7 +587,7 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
   // Mode
   const [mode, setMode] = useState<AddMode>('card');
 
-  // Expansion search (used in both modes)
+  // Expansion search (used in blueprint mode step 1 + set mode)
   const [expQ, setExpQ] = useState('');
   const debouncedExpQ = useDebouncedValue(expQ, DEBOUNCE_MS);
 
@@ -447,9 +598,27 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
   const [bpQ, setBpQ] = useState('');
   const debouncedBpQ = useDebouncedValue(bpQ, DEBOUNCE_MS);
 
-  // Queries — hooks are always called; enabled gates prevent actual requests
-  const expansionQuery = useResolveExpansions(debouncedExpQ);
-  const blueprintQuery = useResolveBlueprints(chosenExp?.id ?? null, debouncedBpQ);
+  // Any-printing mode: card-name search
+  const [cardQ, setCardQ] = useState('');
+  const debouncedCardQ = useDebouncedValue(cardQ, DEBOUNCE_MS);
+
+  // Any-printing mode: chosen card name
+  const [chosenCardName, setChosenCardName] = useState<string | null>(null);
+
+  // Any-printing mode: selected set restriction chips
+  const [setFilterIds, setSetFilterIds] = useState<number[]>([]);
+  const [setFilterNames, setSetFilterNames] = useState<Record<number, string>>({});
+
+  // Any-printing mode: set restriction search
+  const [setQ, setSetQ] = useState('');
+  const debouncedSetQ = useDebouncedValue(setQ, DEBOUNCE_MS);
+
+  // Queries — hooks always called; enabled gates prevent actual requests
+  const expansionQuery    = useResolveExpansions(debouncedExpQ);
+  const blueprintQuery    = useResolveBlueprints(chosenExp?.id ?? null, debouncedBpQ);
+  const cardNameQuery     = useResolveCards(debouncedCardQ);
+  const setFilterQuery    = useResolveExpansions(debouncedSetQ);
+  const catalogProgress   = useCatalogProgress();
 
   // Reset all local state when the modal opens or closes
   useEffect(() => {
@@ -458,6 +627,11 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
       setExpQ('');
       setChosenExp(null);
       setBpQ('');
+      setCardQ('');
+      setChosenCardName(null);
+      setSetFilterIds([]);
+      setSetFilterNames({});
+      setSetQ('');
       createItem.reset();
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -472,6 +646,11 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
     setExpQ('');
     setChosenExp(null);
     setBpQ('');
+    setCardQ('');
+    setChosenCardName(null);
+    setSetFilterIds([]);
+    setSetFilterNames({});
+    setSetQ('');
     createItem.reset();
   }
 
@@ -508,6 +687,43 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
     );
   }
 
+  // Called when user picks a card name in any-printing mode
+  function handlePickCardName(card: ResolveCard) {
+    setChosenCardName(card.name);
+    setCardQ('');
+  }
+
+  // Called when user adds a set restriction chip in any-printing mode
+  function handleAddSetFilter(exp: ResolveExpansion) {
+    setSetFilterIds((prev) => prev.includes(exp.id) ? prev : [...prev, exp.id]);
+    setSetFilterNames((prev) => ({ ...prev, [exp.id]: exp.name }));
+    setSetQ('');
+  }
+
+  // Called when user removes a set restriction chip
+  function handleRemoveSetFilter(id: number) {
+    setSetFilterIds((prev) => prev.filter((x) => x !== id));
+  }
+
+  // Submit the any-printing card watch
+  function handleSubmitCardWatch() {
+    if (!chosenCardName) return;
+    createItem.mutate(
+      {
+        type: 'card',
+        card_name: chosenCardName,
+        ...(setFilterIds.length > 0 ? { expansion_filter: setFilterIds } : {}),
+        game_id: 1,
+      },
+      {
+        onSuccess: (created) => {
+          select(created.id);
+          handleClose();
+        },
+      },
+    );
+  }
+
   // Manual fallback submit (Wave-1 path)
   function handleManualSubmit(id: number, label: string) {
     const type = mode === 'card' ? 'blueprint' : 'expansion';
@@ -521,6 +737,11 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
       },
     );
   }
+
+  // Catalog progress for any-printing mode note
+  const catTotal  = catalogProgress.data?.total ?? 0;
+  const catSynced = catalogProgress.data?.synced ?? 0;
+  const catPartial = catTotal > 0 && catSynced < catTotal;
 
   // ---------------------------------------------------------------------------
   // Determine step label for card mode
@@ -549,8 +770,9 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
         value={mode}
         onChange={handleModeChange}
         options={[
-          { value: 'card', label: 'Watch a card' },
-          { value: 'set',  label: 'Watch a whole set' },
+          { value: 'card',    label: 'Watch a card' },
+          { value: 'set',     label: 'Watch a whole set' },
+          { value: 'anycard', label: 'Card — any printing' },
         ]}
       />
 
@@ -566,7 +788,6 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
             onChange={setExpQ}
           />
 
-          {/* Show "Adding…" spinner when mutation is in flight */}
           {createItem.isPending ? (
             <p className="addflow-none cb-mono">Adding…</p>
           ) : createItem.isError ? (
@@ -588,7 +809,7 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
         </div>
       )}
 
-      {/* ---- CARD MODE ---- */}
+      {/* ---- CARD MODE (specific printing) ---- */}
       {mode === 'card' && (
         <div className="addflow-body">
           {/* Step indicator */}
@@ -610,7 +831,6 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
 
           {/* Step 1: chosen-expansion chip or expansion search */}
           {chosenExp ? (
-            /* Chip showing the chosen expansion */
             <div
               style={{
                 display: 'flex',
@@ -684,7 +904,141 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
         </div>
       )}
 
-      {/* Manual paste fallback — Wave-1 power-user path, visually secondary */}
+      {/* ---- ANY-PRINTING MODE ---- */}
+      {mode === 'anycard' && (
+        <div className="addflow-body">
+          {/* Catalog sync note — shown when not fully synced */}
+          {catPartial && (
+            <p
+              className="cb-mono"
+              style={{ fontSize: 11, color: 'var(--text-dim)', margin: 0, lineHeight: 1.5 }}
+              aria-live="polite"
+            >
+              Matching against {catSynced}/{catTotal} sets synced — coverage grows as the catalog fills.
+            </p>
+          )}
+
+          {/* Step 1: pick a card name */}
+          {!chosenCardName ? (
+            <>
+              <SearchBox
+                id="addflow-card-search"
+                label="Search for a card by name (any printing)"
+                value={cardQ}
+                placeholder="e.g. Lightning Bolt, Black Lotus…"
+                autoFocus
+                onChange={setCardQ}
+              />
+
+              {createItem.isError ? (
+                <p className="addflow-none cb-mono" style={{ color: 'var(--bad)' }} role="alert">
+                  {createItem.error?.message ?? 'Failed to add. Try again.'}
+                </p>
+              ) : (
+                <CardNameResults
+                  q={cardQ}
+                  debouncedQ={debouncedCardQ}
+                  isPending={cardNameQuery.isPending && cardNameQuery.fetchStatus !== 'idle'}
+                  isError={cardNameQuery.isError}
+                  error={cardNameQuery.error}
+                  data={cardNameQuery.data}
+                  onPick={handlePickCardName}
+                />
+              )}
+            </>
+          ) : (
+            /* Step 2: chosen card name + optional set restriction + submit */
+            <>
+              {/* Chosen card name chip */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  padding: '8px 12px',
+                  background: 'var(--accent-soft)',
+                  border: '1px solid color-mix(in oklab, var(--accent) 40%, transparent)',
+                  borderRadius: 'var(--radius)',
+                }}
+              >
+                <span className="addflow-opt-name" style={{ fontSize: 13 }}>{chosenCardName}</span>
+                <button
+                  type="button"
+                  className="addflow-back cb-mono"
+                  onClick={() => { setChosenCardName(null); setSetFilterIds([]); setSetFilterNames({}); }}
+                  aria-label="Change chosen card"
+                >
+                  ← change
+                </button>
+              </div>
+
+              {/* Optional set restriction */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span className="cb-eyebrow" style={{ color: 'var(--text-dim)' }}>
+                  Set restriction (optional)
+                </span>
+                <p className="cb-mono" style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>
+                  Leave empty to watch every printing. Add sets to restrict matching.
+                </p>
+
+                {/* Current chips */}
+                <SetChips
+                  ids={setFilterIds}
+                  names={setFilterNames}
+                  onRemove={handleRemoveSetFilter}
+                />
+
+                {/* Set search to add chips */}
+                <SearchBox
+                  id="addflow-setfilter-search"
+                  label="Search for a set to restrict"
+                  value={setQ}
+                  placeholder="Add a set restriction…"
+                  onChange={setSetQ}
+                />
+
+                {setQ.trim().length >= 2 && (
+                  <ExpansionResults
+                    q={setQ}
+                    debouncedQ={debouncedSetQ}
+                    isPending={setFilterQuery.isPending && setFilterQuery.fetchStatus !== 'idle'}
+                    isError={setFilterQuery.isError}
+                    error={setFilterQuery.error}
+                    data={setFilterQuery.data}
+                    onPick={handleAddSetFilter}
+                    pickLabel="+ restrict to this set"
+                    excludeIds={setFilterIds}
+                  />
+                )}
+              </div>
+
+              {/* Submit */}
+              {createItem.isError && (
+                <p className="addflow-none cb-mono" style={{ color: 'var(--bad)' }} role="alert">
+                  {createItem.error?.message ?? 'Failed to add. Try again.'}
+                </p>
+              )}
+
+              <Btn
+                variant="primary"
+                className="cb-btn-sm"
+                onClick={handleSubmitCardWatch}
+                disabled={createItem.isPending}
+              >
+                {createItem.isPending
+                  ? 'Adding…'
+                  : setFilterIds.length > 0
+                  ? `Watch "${chosenCardName}" in ${setFilterIds.length} set${setFilterIds.length !== 1 ? 's' : ''}`
+                  : `Watch "${chosenCardName}" — all sets`}
+              </Btn>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Manual paste fallback — Wave-1 power-user path, visually secondary.
+          Hidden in any-printing mode (no cardtrader_id concept). */}
       <ManualFallback
         mode={mode}
         onSubmit={handleManualSubmit}

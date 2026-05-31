@@ -1,4 +1,4 @@
-import type { Config, Deal, Health, ResolveBlueprint, ResolveExpansion, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, ResettableField } from './types';
+import type { CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
 
 // ---------------------------------------------------------------------------
 // Environment — base URL and dev token come from Vite env vars.
@@ -228,6 +228,28 @@ export function getResolveBlueprints(expansionId: number, q: string): Promise<Re
     q,
   });
   return apiFetch<ResolveBlueprint[]>(`/api/resolve/blueprints?${params.toString()}`);
+}
+
+/**
+ * GET /api/resolve/cards?q=<str>
+ *
+ * Returns distinct card names from the locally-cached blueprint catalog that
+ * match the query string. Empty array when q < 2 chars (server contract).
+ * Cache-only — never hits CardTrader; never 502.
+ */
+export function getResolveCards(q: string): Promise<ResolveCard[]> {
+  const params = new URLSearchParams({ q });
+  return apiFetch<ResolveCard[]>(`/api/resolve/cards?${params.toString()}`);
+}
+
+/**
+ * GET /api/resolve/catalog-progress
+ *
+ * Returns how many sets have been pulled into the local blueprint catalog.
+ * Used by Settings and the AddFlow modal to show sync completeness.
+ */
+export function getCatalogProgress(): Promise<CatalogProgress> {
+  return apiFetch<CatalogProgress>('/api/resolve/catalog-progress');
 }
 
 /** POST /api/scan/run-now — trigger an immediate scan. */

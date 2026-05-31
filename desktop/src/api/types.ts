@@ -4,7 +4,8 @@
 export type Priority = 'high' | 'normal';
 export type Foil = 0 | 1 | null;
 export type DbBool = 0 | 1;
-export type WatchItemType = 'blueprint' | 'expansion';
+export type WatchItemType = 'blueprint' | 'expansion' | 'card';
+export type DetectionMode = 'discount' | 'price';
 export type Theme = 'light' | 'dark' | 'system';
 export type Density = 'comfortable' | 'compact';
 export type Importance = 'low' | 'normal' | 'high';
@@ -90,6 +91,14 @@ export interface Config {
   scan_mode: ScanMode;
   scan_batch_size: number;
 
+  // Detection mode defaults (§9a inheritable per-ticket)
+  default_detection_mode: DetectionMode;
+  default_max_price_cents: number | null;
+
+  // Catalog sync
+  catalog_sync_enabled: DbBool;
+  catalog_max_exports_per_run: number;
+
   // Maintenance
   deal_retention_days: number;
   timezone: string | null;
@@ -103,7 +112,7 @@ export interface Config {
 export interface WatchItem {
   id: number;
   type: WatchItemType;
-  cardtrader_id: number;
+  cardtrader_id: number | null;
   label: string;
   game_id: number | null;
 
@@ -117,6 +126,16 @@ export interface WatchItem {
   telegram_min_discount_pct: number | null;
   telegram_max_price_cents: number | null;   // cents
   telegram_min_savings_cents: number | null; // cents
+
+  // Detection mode override (NULL = inherit config.default_detection_mode)
+  detection_mode: DetectionMode | null;
+  // Absolute-price cap override (NULL = inherit config.default_max_price_cents)
+  max_price_cents: number | null;
+
+  // Card-type fields (only populated when type === 'card')
+  card_name_norm: string | null;
+  // JSON-serialised int[] of expansion_ids; NULL/empty = all sets
+  expansion_filter: string | null;
 
   active: DbBool;
   created_at: string;
@@ -161,13 +180,14 @@ export interface ScanRun {
 // ---------------------------------------------------------------------------
 // WatchItemCreate — body for POST /api/watchlist
 // Required core fields + optional override columns (omit to inherit from config)
+//
+// Three variants:
+//   blueprint/expansion — require cardtrader_id
+//   card                — require card_name; expansion_filter is optional int[]
 // ---------------------------------------------------------------------------
-export type WatchItemCreate = {
-  type: WatchItemType;
-  cardtrader_id: number;
-  label: string;
-  game_id?: number;
-} & Partial<Pick<
+
+/** Shared optional override columns — omit to inherit from config (§9a born-inheriting) */
+type WatchItemOverrides = Partial<Pick<
   WatchItem,
   | 'min_condition'
   | 'foil_pref'
@@ -178,12 +198,62 @@ export type WatchItemCreate = {
   | 'telegram_min_discount_pct'
   | 'telegram_max_price_cents'
   | 'telegram_min_savings_cents'
+  | 'detection_mode'
+  | 'max_price_cents'
 >>;
 
+/** POST body for blueprint or expansion items (cardtrader_id required) */
+export type WatchItemCreateBlueprintOrExpansion = {
+  type: 'blueprint' | 'expansion';
+  cardtrader_id: number;
+  label: string;
+  game_id?: number;
+} & WatchItemOverrides;
+
+/** POST body for card items (watched by name across printings; no cardtrader_id) */
+export type WatchItemCreateCard = {
+  type: 'card';
+  card_name: string;
+  /** Optional set restriction — int[] of expansion_ids; omit/empty = all sets */
+  expansion_filter?: number[];
+  label?: string;
+  game_id?: number;
+} & WatchItemOverrides;
+
+export type WatchItemCreate = WatchItemCreateBlueprintOrExpansion | WatchItemCreateCard;
+
 // ---------------------------------------------------------------------------
-// ResettableField — the two columns that PATCH /api/watchlist/:id/reset accepts
+// WatchItemPatch — body for PATCH /api/watchlist/:id
+// All fields optional; detection_mode/max_price_cents can be sent as null to reset to inherit
 // ---------------------------------------------------------------------------
-export type ResettableField = 'threshold_pct' | 'telegram_min_discount_pct';
+export type WatchItemPatch = Partial<Pick<
+  WatchItem,
+  | 'label'
+  | 'active'
+  | 'min_condition'
+  | 'foil_pref'
+  | 'allow_graded'
+  | 'threshold_pct'
+  | 'importance'
+  | 'telegram_enabled'
+  | 'telegram_min_discount_pct'
+  | 'telegram_max_price_cents'
+  | 'telegram_min_savings_cents'
+  | 'detection_mode'
+  | 'max_price_cents'
+>> & {
+  /** Pass number[] to set; pass null to clear (all sets); omit to leave unchanged */
+  expansion_filter?: number[] | null;
+};
+
+// ---------------------------------------------------------------------------
+// ResettableField — columns that PATCH /api/watchlist/:id/reset accepts
+// ---------------------------------------------------------------------------
+export type ResettableField =
+  | 'threshold_pct'
+  | 'telegram_min_discount_pct'
+  | 'detection_mode'
+  | 'max_price_cents';
 
 // ---------------------------------------------------------------------------
 // Resolve — search results from the expansion / blueprint resolve cache
@@ -203,6 +273,27 @@ export interface ResolveBlueprint {
   expansion_id: number;
   name: string;
   image_url: string | null;
+}
+
+/**
+ * One result from GET /api/resolve/cards?q=
+ * Distinct card names matched across all locally-cached blueprints.
+ */
+export interface ResolveCard {
+  name: string;
+  /** Total number of printings (blueprint rows) matching this name */
+  printings: number;
+  /** Number of distinct sets containing this card */
+  sets: number;
+}
+
+/**
+ * Response from GET /api/resolve/catalog-progress
+ * Shows how many sets have been pulled into the local blueprint catalog.
+ */
+export interface CatalogProgress {
+  total: number;
+  synced: number;
 }
 
 // ---------------------------------------------------------------------------

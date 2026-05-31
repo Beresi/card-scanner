@@ -48,6 +48,11 @@ const BASE_CONFIG: ConfigRow = {
   scan_mode: 'chunked',
   scan_batch_size: 40,
   scan_cycle_started_at: null,
+  // Migration 0005 additions
+  default_detection_mode: 'discount',
+  default_max_price_cents: null,
+  catalog_sync_enabled: 0,
+  catalog_max_exports_per_run: 1,
   updated_at: '2025-01-01T00:00:00Z',
 };
 
@@ -70,6 +75,11 @@ const INHERITING_TICKET: WatchlistRow = {
   active: 1,
   created_at: '2025-01-01T00:00:00Z',
   updated_at: '2025-01-01T00:00:00Z',
+  // Migration 0005 additions — NULL = inherit config at scan time
+  detection_mode: null,
+  max_price_cents: null,
+  card_name_norm: null,
+  expansion_filter: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -262,5 +272,72 @@ describe('resolveEffective — deal-floor config-only fields', () => {
     const updatedConfig: ConfigRow = { ...BASE_CONFIG, min_price_cents: 0 };
     const result = resolveEffective(INHERITING_TICKET, updatedConfig);
     expect(result.min_price_cents).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. detection_mode inheritance (migration 0005)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — detection_mode inheritance (migration 0005)', () => {
+  it('NULL on ticket → inherits config.default_detection_mode', () => {
+    // INHERITING_TICKET.detection_mode = null; BASE_CONFIG.default_detection_mode = 'discount'
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.detection_mode).toBe('discount');
+  });
+
+  it('reflects a config change to default_detection_mode — moving baseline', () => {
+    // If the config default changes to 'price', all inheriting tickets switch automatically.
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_detection_mode: 'price' };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.detection_mode).toBe('price');
+  });
+
+  it("explicit ticket detection_mode 'price' is sticky — overrides config default", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, detection_mode: 'price' };
+    const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'discount'
+    expect(result.detection_mode).toBe('price');
+  });
+
+  it("explicit ticket detection_mode 'discount' stays 'discount' even when config default changes", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, detection_mode: 'discount' };
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_detection_mode: 'price' };
+    const result = resolveEffective(ticket, updatedConfig);
+    expect(result.detection_mode).toBe('discount');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. max_price_cents inheritance (migration 0005)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — max_price_cents inheritance (migration 0005)', () => {
+  it('NULL on ticket → inherits config.default_max_price_cents', () => {
+    // BASE_CONFIG.default_max_price_cents = null → effective max_price_cents = null
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.max_price_cents).toBeNull();
+  });
+
+  it('NULL on ticket → inherits a non-null config default (moving baseline)', () => {
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_max_price_cents: 500 };
+    const result = resolveEffective(INHERITING_TICKET, updatedConfig);
+    expect(result.max_price_cents).toBe(500); // integer cents
+  });
+
+  it('explicit max_price_cents 0 on ticket is honored — NOT treated as missing (proves ??)', () => {
+    // If `||` were used instead of `??`, 0 would be falsy and fall through to config.
+    // With `??`, 0 is a valid explicit value and must be returned as-is.
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, max_price_cents: 0 };
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_max_price_cents: 500 };
+    const result = resolveEffective(ticket, updatedConfig);
+    expect(result.max_price_cents).toBe(0);
+    expect(result.max_price_cents).not.toBe(500);
+  });
+
+  it('explicit max_price_cents value is sticky — overrides config default', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, max_price_cents: 999 };
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_max_price_cents: 500 };
+    const result = resolveEffective(ticket, updatedConfig);
+    expect(result.max_price_cents).toBe(999); // integer cents
   });
 });

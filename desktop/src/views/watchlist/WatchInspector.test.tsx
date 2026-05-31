@@ -42,6 +42,8 @@ vi.mock('../../api/client', () => ({
   runScanNow:      vi.fn(),
   getResolveExpansions: vi.fn().mockResolvedValue([]),
   getResolveBlueprints: vi.fn().mockResolvedValue([]),
+  getResolveCards:      vi.fn().mockResolvedValue([]),
+  getCatalogProgress:   vi.fn().mockResolvedValue({ total: 0, synced: 0 }),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({

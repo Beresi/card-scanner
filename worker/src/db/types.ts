@@ -30,6 +30,9 @@ export type FoilPref = 'any' | 'foil' | 'nonfoil';
 
 export type Importance = 'high' | 'normal';
 
+/** Detection mode for deal evaluation (§9a inheritable). */
+export type DetectionMode = 'discount' | 'price';
+
 // ---------------------------------------------------------------------------
 // Raw D1 row types
 // ---------------------------------------------------------------------------
@@ -38,17 +41,22 @@ export type Importance = 'high' | 'normal';
  * Every column in the `watchlist` table, typed as D1 returns them.
  *
  * Nullability matches `schema.sql` exactly:
- *  - Only `threshold_pct`, `telegram_min_discount_pct`, `telegram_max_price_cents`,
- *    and `telegram_min_savings_cents` are nullable override columns (no `NOT NULL`
- *    in the DDL).  NULL means "inherit from config at scan time" (§9a).
+ *  - `threshold_pct`, `telegram_min_discount_pct`, `telegram_max_price_cents`,
+ *    `telegram_min_savings_cents`, `detection_mode`, `max_price_cents` are nullable
+ *    override columns (no `NOT NULL` in the DDL). NULL means "inherit from config
+ *    at scan time" (§9a).
+ *  - `card_name_norm` and `expansion_filter` are nullable; only populated for
+ *    `type='card'` items.
+ *  - `cardtrader_id` is nullable — card-type items have no CardTrader blueprint/
+ *    expansion id.
  *  - All other columns are `NOT NULL DEFAULT` — they are always present.
  *  - Boolean columns (`allow_graded`, `telegram_enabled`, `active`) are stored as
  *    `0 | 1`; the repo converts them to real booleans at its boundary.
  */
 export interface WatchlistRow {
   id: number;
-  type: 'blueprint' | 'expansion';
-  cardtrader_id: number;
+  type: 'blueprint' | 'expansion' | 'card';  // 'card' = watch by name across sets (migration 0005)
+  cardtrader_id: number | null;               // blueprint_id or expansion_id; NULL for type='card'
   label: string;
   game_id: number;
   min_condition: string;           // NOT NULL DEFAULT 'Near Mint'
@@ -63,6 +71,12 @@ export interface WatchlistRow {
   active: 0 | 1;                   // NOT NULL DEFAULT 1
   created_at: string;              // UTC TEXT, datetime('now')
   updated_at: string;              // UTC TEXT, datetime('now')
+  // §9a nullable override columns (migration 0005)
+  detection_mode: string | null;   // nullable — NULL → inherit config.default_detection_mode
+  max_price_cents: number | null;  // nullable — NULL → inherit config.default_max_price_cents
+  // Card-type identity columns (migration 0005; only set for type='card')
+  card_name_norm: string | null;   // normalized name; NULL for non-card types
+  expansion_filter: string | null; // JSON int array of expansion_ids; NULL/[] = all sets
 }
 
 /**
@@ -120,6 +134,13 @@ export interface ConfigRow {
   // NULL = no cycle started. Set at the start of each new sweep; reset when sweep completes.
   scan_cycle_started_at: string | null;
 
+  // Detection-mode defaults + catalog controls (migration 0005)
+  // default_detection_mode / default_max_price_cents are §9a inheritable defaults.
+  default_detection_mode: string;          // NOT NULL DEFAULT 'discount' ('discount' | 'price')
+  default_max_price_cents: number | null;  // nullable — NULL = no absolute cap
+  catalog_sync_enabled: 0 | 1;            // NOT NULL DEFAULT 0
+  catalog_max_exports_per_run: number;     // NOT NULL DEFAULT 1
+
   updated_at: string;                      // UTC TEXT, datetime('now')
 }
 
@@ -172,7 +193,7 @@ export interface ScanRunRow {
  *
  * Consumed by:
  *  - `scan/dealEngine` — min_condition, foil_pref, allow_graded, threshold_pct,
- *    cohort_size, min_cohort (deal-logic fields).
+ *    cohort_size, min_cohort, detection_mode, max_price_cents (deal-logic fields).
  *  - `telegram/routing` — importance, telegram_enabled, telegram_min_discount_pct,
  *    telegram_max_price_cents, telegram_min_savings_cents (Phase-2 routing fields).
  *
@@ -193,6 +214,9 @@ export interface EffectiveSettings {
   telegram_min_discount_pct: number;
   telegram_max_price_cents: number | null;    // null = no cap (no config fallback)
   telegram_min_savings_cents: number | null;  // null = no floor (no config fallback)
+  // §9a inheritable detection-mode fields (migration 0005)
+  detection_mode: DetectionMode;              // §9a — ticket ?? config.default_detection_mode
+  max_price_cents: number | null;             // §9a — ticket ?? config.default_max_price_cents; null = no cap
 }
 
 // ---------------------------------------------------------------------------
@@ -278,20 +302,26 @@ export interface DealRow {
 /**
  * Shape for inserting a new watchlist row.
  *
- * Required: the three identifying columns that the route must supply.
+ * Required: the identifying columns that the route must supply.
+ *   - blueprint/expansion: type + cardtrader_id + label.
+ *   - card: type + card_name_norm + label (cardtrader_id omitted / null).
  * Optional: columns that have NOT NULL DEFAULT values in the schema — the SQL
  *   INSERT omits absent ones so the DB defaults apply (born inheriting §9a).
- * The four nullable §9a override / no-fallback columns default to NULL;
- *   new items are born inheriting.
+ * All nullable §9a override columns default to NULL; new items are born inheriting.
  *
  * Boolean columns use `0 | 1` to match the row convention; the route layer
  * converts real JS booleans to 0/1 before constructing this type.
  */
 export interface WatchlistInsert {
-  // Required
-  type: 'blueprint' | 'expansion';
-  cardtrader_id: number;
+  // Required for all types
+  type: 'blueprint' | 'expansion' | 'card';
   label: string;
+
+  // Required for blueprint/expansion; omitted (or null) for card
+  cardtrader_id?: number | null;
+
+  // Required for card type; omitted for blueprint/expansion
+  card_name_norm?: string | null;
 
   // Optional — schema provides NOT NULL DEFAULT values
   game_id?: number;
@@ -305,10 +335,16 @@ export interface WatchlistInsert {
   // §9a nullable override columns — NULL → inherit config at scan time
   threshold_pct?: number | null;
   telegram_min_discount_pct?: number | null;
+  // §9a nullable override columns (migration 0005) — NULL → inherit config at scan time
+  detection_mode?: string | null;
+  max_price_cents?: number | null;
 
   // No-fallback nullable columns — NULL → no cap / no floor
   telegram_max_price_cents?: number | null;
   telegram_min_savings_cents?: number | null;
+
+  // Card-type identity column (migration 0005) — JSON int array; NULL/[] = all sets
+  expansion_filter?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +361,8 @@ export interface ExpansionRow {
   code: string | null;
   name: string | null;
   synced_at: string;
+  /** UTC timestamp of last blueprintsExport for this expansion; NULL = not yet catalog-synced. */
+  blueprints_synced_at: string | null;
 }
 
 /**
@@ -335,6 +373,8 @@ export interface BlueprintRow {
   id: number;
   expansion_id: number | null;
   name: string | null;
+  /** Normalized (lowercase, trimmed) name for cross-set card-name search (migration 0005). */
+  name_norm: string | null;
   image_url: string | null;
   /** UTC timestamp of last chunked-mode scan attempt; NULL = never scanned. */
   last_scanned_at: string | null;

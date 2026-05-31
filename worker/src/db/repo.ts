@@ -15,6 +15,7 @@
  * PRD §9 / §9a; docs/documentation/data-model.md; docs/documentation/scanner.md.
  */
 
+import { normalizeCardName } from '../scan/cardName';
 import type {
   WatchlistRow,
   WatchlistInsert,
@@ -167,7 +168,11 @@ export async function listActiveWatchlist(
               telegram_min_savings_cents,
               active,
               created_at,
-              updated_at
+              updated_at,
+              detection_mode,
+              max_price_cents,
+              card_name_norm,
+              expansion_filter
          FROM watchlist
         WHERE active = 1
         ORDER BY id ASC`,
@@ -349,6 +354,11 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   'scan_batch_size',
   // Chunked cycle tracking (migration 0004)
   'scan_cycle_started_at',
+  // Detection-mode defaults + catalog controls (migration 0005)
+  'default_detection_mode',
+  'default_max_price_cents',
+  'catalog_sync_enabled',
+  'catalog_max_exports_per_run',
 ]);
 
 /**
@@ -408,17 +418,29 @@ const WATCHLIST_PATCHABLE_COLS = new Set<string>([
   'telegram_max_price_cents',
   'telegram_min_savings_cents',
   'active',
+  // §9a nullable overrides (migration 0005)
+  'detection_mode',
+  'max_price_cents',
+  // card-type set filter (migration 0005); card_name_norm is NOT patchable post-create
+  'expansion_filter',
 ]);
 
 /**
- * The two §9a override columns that `:id/reset` is permitted to null out.
- * `telegram_max_price_cents` and `telegram_min_savings_cents` are intentionally
- * excluded — they have no config fallback and resetting them to NULL would be
- * ambiguous (NULL already means "no cap / no floor", not "inherit").
+ * The §9a override columns that `:id/reset` is permitted to null out.
+ * These are columns that have a config fallback — NULLing them means "inherit".
+ *
+ * Excluded:
+ * - `telegram_max_price_cents` and `telegram_min_savings_cents`: no config
+ *   fallback; NULL means "no cap / no floor", not "inherit".
+ * - `expansion_filter` and `card_name_norm`: not §9a inheritance; card identity
+ *   columns that shouldn't be wiped via reset.
  */
 const WATCHLIST_RESETTABLE_COLS = new Set<string>([
   'threshold_pct',
   'telegram_min_discount_pct',
+  // §9a nullable overrides with config fallback (migration 0005)
+  'detection_mode',
+  'max_price_cents',
 ]);
 
 /**
@@ -435,7 +457,9 @@ export async function getWatchlistById(
               foil_pref, allow_graded, threshold_pct, importance,
               telegram_enabled, telegram_min_discount_pct,
               telegram_max_price_cents, telegram_min_savings_cents,
-              active, created_at, updated_at
+              active, created_at, updated_at,
+              detection_mode, max_price_cents,
+              card_name_norm, expansion_filter
          FROM watchlist
         WHERE id = ?`,
     )
@@ -456,7 +480,9 @@ export async function listWatchlist(db: D1Database): Promise<WatchlistRow[]> {
               foil_pref, allow_graded, threshold_pct, importance,
               telegram_enabled, telegram_min_discount_pct,
               telegram_max_price_cents, telegram_min_savings_cents,
-              active, created_at, updated_at
+              active, created_at, updated_at,
+              detection_mode, max_price_cents,
+              card_name_norm, expansion_filter
          FROM watchlist
         ORDER BY id ASC`,
     )
@@ -484,9 +510,14 @@ export async function insertWatchlist(
   type ColVal = [string, unknown];
   const colVals: ColVal[] = [
     ['type', row.type],
-    ['cardtrader_id', row.cardtrader_id],
     ['label', row.label],
   ];
+
+  // cardtrader_id is nullable — blueprint/expansion rows pass a number; card rows
+  // pass null (or omit it). Always bind when present to avoid ambiguity.
+  if (row.cardtrader_id !== undefined)     { colVals.push(['cardtrader_id', row.cardtrader_id]); }
+  // card_name_norm — required for type='card'; omitted for blueprint/expansion.
+  if (row.card_name_norm !== undefined)    { colVals.push(['card_name_norm', row.card_name_norm]); }
 
   if (row.game_id !== undefined)           { colVals.push(['game_id', row.game_id]); }
   if (row.min_condition !== undefined)     { colVals.push(['min_condition', row.min_condition]); }
@@ -501,6 +532,11 @@ export async function insertWatchlist(
   if (row.telegram_min_discount_pct !== undefined)  { colVals.push(['telegram_min_discount_pct', row.telegram_min_discount_pct]); }
   if (row.telegram_max_price_cents !== undefined)   { colVals.push(['telegram_max_price_cents', row.telegram_max_price_cents]); }
   if (row.telegram_min_savings_cents !== undefined) { colVals.push(['telegram_min_savings_cents', row.telegram_min_savings_cents]); }
+  // §9a nullable overrides (migration 0005) — born inheriting when absent
+  if (row.detection_mode !== undefined)    { colVals.push(['detection_mode', row.detection_mode]); }
+  if (row.max_price_cents !== undefined)   { colVals.push(['max_price_cents', row.max_price_cents]); }
+  // Card-type expansion filter (migration 0005) — JSON int array; NULL/[] = all sets
+  if (row.expansion_filter !== undefined)  { colVals.push(['expansion_filter', row.expansion_filter]); }
 
   const cols = colVals.map(([c]) => c).join(', ');
   const placeholders = colVals.map(() => '?').join(', ');
@@ -797,16 +833,17 @@ export async function syncBlueprints(
     const stmts = chunk.map((r) =>
       db
         .prepare(
-          `INSERT INTO blueprints (id, expansion_id, name, scryfall_id, image_url, synced_at)
-           VALUES (?, ?, ?, ?, ?, datetime('now'))
+          `INSERT INTO blueprints (id, expansion_id, name, name_norm, scryfall_id, image_url, synced_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
            ON CONFLICT(id) DO UPDATE SET
              expansion_id = excluded.expansion_id,
              name         = excluded.name,
+             name_norm    = excluded.name_norm,
              scryfall_id  = excluded.scryfall_id,
              image_url    = excluded.image_url,
              synced_at    = datetime('now')`,
         )
-        .bind(r.id, r.expansion_id, r.name, r.scryfall_id, r.image_url),
+        .bind(r.id, r.expansion_id, r.name, normalizeCardName(r.name), r.scryfall_id, r.image_url),
     );
     await db.batch(stmts);
   }
@@ -904,7 +941,7 @@ export async function searchBlueprints(
   const like = `%${q}%`;
   const { results } = await db
     .prepare(
-      `SELECT id, expansion_id, name, image_url, last_scanned_at
+      `SELECT id, expansion_id, name, name_norm, image_url, last_scanned_at
          FROM blueprints
         WHERE expansion_id = ? AND name LIKE ?
         ORDER BY name
@@ -1079,4 +1116,166 @@ export async function countScannedThisCycle(
     .first<{ n: number }>();
 
   return row?.n ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Card-name catalog search (migration 0005)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve blueprint ids for a card by its normalised name, optionally scoped
+ * to a subset of expansion ids.
+ *
+ * Cache-only read — never calls CardTrader.  Matches `blueprints.name_norm = ?`;
+ * when `expansionIds` is a non-empty array also adds `AND expansion_id IN (...)`.
+ * Null or empty `expansionIds` = all sets (no IN filter).
+ *
+ * Returns `{ id, expansion_id }` pairs — the minimum the scanner needs to wire
+ * each resolved blueprint back to its card WatchlistRow.
+ *
+ * Bound-placeholder generation is safe: the IN-list is built from `Array.length`
+ * repetitions of `?`, never string-interpolated user values.
+ */
+export async function resolveCardBlueprints(
+  db: D1Database,
+  nameNorm: string,
+  expansionIds: number[] | null,
+): Promise<{ id: number; expansion_id: number }[]> {
+  const filtered = expansionIds && expansionIds.length > 0;
+
+  let sql = `SELECT id, expansion_id FROM blueprints WHERE name_norm = ?`;
+  const binds: unknown[] = [nameNorm];
+
+  if (filtered) {
+    const placeholders = (expansionIds as number[]).map(() => '?').join(', ');
+    sql += ` AND expansion_id IN (${placeholders})`;
+    binds.push(...(expansionIds as number[]));
+  }
+
+  const { results } = await db
+    .prepare(sql)
+    .bind(...binds)
+    .all<{ id: number; expansion_id: number }>();
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Chunked scan by explicit id set (migration 0005 — card type)
+// ---------------------------------------------------------------------------
+
+/**
+ * Select the next batch of blueprints to scan from an explicit set of blueprint
+ * ids (used for card-type watchlist items that resolve to many printings).
+ *
+ * Same rotation order as `selectBlueprintsToScan`:
+ *   1. Never-scanned first (NULL last_scanned_at).
+ *   2. Oldest-scanned first (last_scanned_at ASC).
+ *   3. Tie-break by id ASC.
+ *
+ * Returns `[]` immediately when `ids` is empty or `limit` is zero — the IN-list
+ * guard prevents a bare `WHERE id IN ()` which is invalid in SQLite.
+ */
+export async function selectBlueprintsToScanByIds(
+  db: D1Database,
+  ids: number[],
+  limit: number,
+): Promise<{ id: number; expansion_id: number }[]> {
+  if (ids.length === 0 || limit <= 0) { return []; }
+
+  const placeholders = ids.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT id, expansion_id
+         FROM blueprints
+        WHERE id IN (${placeholders})
+        ORDER BY (last_scanned_at IS NULL) DESC,
+                 last_scanned_at ASC,
+                 id ASC
+        LIMIT ?`,
+    )
+    .bind(...ids, limit)
+    .all<{ id: number; expansion_id: number }>();
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Catalog-sync helpers (migration 0005)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the ids of the next `limit` MTG expansions that have not yet had their
+ * blueprint catalog exported (i.e. `blueprints_synced_at IS NULL`).
+ *
+ * Only considers game_id = 1 (Magic: The Gathering).  Results are ordered by
+ * `id ASC` for a stable, deterministic sync progression.
+ *
+ * Returns an empty array when all expansions are synced or the table is empty.
+ */
+export async function selectNextCatalogExpansions(
+  db: D1Database,
+  limit: number,
+): Promise<number[]> {
+  if (limit <= 0) { return []; }
+
+  const { results } = await db
+    .prepare(
+      `SELECT id
+         FROM expansions
+        WHERE game_id = 1
+          AND blueprints_synced_at IS NULL
+        ORDER BY id
+        LIMIT ?`,
+    )
+    .bind(limit)
+    .all<{ id: number }>();
+
+  return results.map((r) => r.id);
+}
+
+/**
+ * Mark a single expansion as catalog-synced.
+ *
+ * Sets `blueprints_synced_at = datetime('now')` for the given expansion id.
+ * Called by the scanner after a successful `blueprintsExport` + `syncBlueprints`
+ * call so the id is no longer returned by `selectNextCatalogExpansions`.
+ */
+export async function markExpansionCatalogSynced(
+  db: D1Database,
+  expansionId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE expansions
+          SET blueprints_synced_at = datetime('now')
+        WHERE id = ?`,
+    )
+    .bind(expansionId)
+    .run();
+}
+
+/**
+ * Count catalog-sync progress for MTG expansions (game_id = 1).
+ *
+ * Returns:
+ *  - `total`: all MTG expansions in the local cache.
+ *  - `synced`: those that have `blueprints_synced_at IS NOT NULL`.
+ *
+ * Used by `GET /api/resolve/catalog-progress` and the health telemetry.
+ */
+export async function countCatalogProgress(
+  db: D1Database,
+): Promise<{ total: number; synced: number }> {
+  const row = await db
+    .prepare(
+      `SELECT
+         COUNT(*) AS total,
+         COUNT(blueprints_synced_at) AS synced
+         FROM expansions
+        WHERE game_id = 1`,
+    )
+    .first<{ total: number; synced: number }>();
+
+  return { total: row?.total ?? 0, synced: row?.synced ?? 0 };
 }

@@ -21,7 +21,8 @@
  * The UI DISPLAYS inherit vs override state; it never resolves for scan
  * purposes — that is the backend's job.
  */
-import type { Config, WatchItem } from '../../api/types';
+import type { Config, DetectionMode, WatchItem } from '../../api/types';
+import { usd } from '../../lib/format';
 
 // Fields with a real config default — InheritField applies here
 export type InheritableField =
@@ -30,7 +31,9 @@ export type InheritableField =
   | 'foil_pref'
   | 'importance'
   | 'telegram_enabled'
-  | 'telegram_min_discount_pct';
+  | 'telegram_min_discount_pct'
+  | 'detection_mode'
+  | 'max_price_cents';
 
 export interface EffResult<T> {
   /** The effective display value (item override if set, else config default) */
@@ -121,5 +124,39 @@ export function effTelegramMinDiscount(item: WatchItem, config: Config): EffResu
     value: item.telegram_min_discount_pct ?? config.telegram_min_discount_pct,
     inherited,
     defaultLabel: `${config.telegram_min_discount_pct}%`,
+  };
+}
+
+/**
+ * Resolve effective detection_mode for display.
+ *
+ * 'discount' (the default) uses the existing threshold_pct / median-baseline logic.
+ * 'price' flags any listing whose price_cents ≤ max_price_cents.
+ */
+export function effDetectionMode(item: WatchItem, config: Config): EffResult<DetectionMode> {
+  const inherited = item.detection_mode == null;
+  const dflt = config.default_detection_mode;
+  return {
+    value: item.detection_mode ?? dflt,
+    inherited,
+    defaultLabel: dflt,
+  };
+}
+
+/**
+ * Resolve effective max_price_cents for display.
+ *
+ * NULL means "no price cap" — the item (and possibly the config default) have no
+ * absolute ceiling, so detection falls back to threshold_pct in discount mode.
+ * defaultLabel is either a formatted dollar amount or "none" when the config
+ * default is also null.
+ */
+export function effMaxPrice(item: WatchItem, config: Config): EffResult<number | null> {
+  const inherited = item.max_price_cents == null;
+  const dflt = config.default_max_price_cents;
+  return {
+    value: item.max_price_cents ?? dflt,
+    inherited,
+    defaultLabel: dflt != null ? usd(dflt) : 'none',
   };
 }

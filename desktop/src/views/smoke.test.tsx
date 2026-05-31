@@ -39,6 +39,8 @@ vi.mock('../api/client', () => ({
   runScanNow:   vi.fn(),
   getResolveExpansions: vi.fn().mockResolvedValue([]),
   getResolveBlueprints: vi.fn().mockResolvedValue([]),
+  getResolveCards:      vi.fn().mockResolvedValue([]),
+  getCatalogProgress:   vi.fn().mockResolvedValue({ total: 0, synced: 0 }),
   ApiError: class ApiError extends Error {
     status: number;
     code: string;
@@ -97,6 +99,10 @@ const SMOKE_WATCHLIST: WatchItem[] = [
     telegram_min_discount_pct: null,
     telegram_max_price_cents: null,
     telegram_min_savings_cents: null,
+    detection_mode: null,
+    max_price_cents: null,
+    card_name_norm: null,
+    expansion_filter: null,
     active: 1,
     created_at: '2026-05-25 10:00:00',
     updated_at: '2026-05-25 10:00:00',

@@ -76,6 +76,9 @@ function defaultSettings(
     telegram_min_discount_pct: 60,
     telegram_max_price_cents: null,
     telegram_min_savings_cents: null,
+    // Migration 0005: default to 'discount' so existing §16 tests are unchanged.
+    detection_mode: 'discount',
+    max_price_cents: null,
     ...overrides,
   };
 }
@@ -453,5 +456,169 @@ describe('absolute deal floors — min_price_cents + min_savings_cents', () => {
 
     expect(result).not.toBeNull();
     expect(result!.discountPct).toBe(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Price mode (migration 0005 — detection_mode: 'price')
+// ---------------------------------------------------------------------------
+
+describe("price mode — detection_mode: 'price'", () => {
+  // Case 1: cheapest passing listing ≤ max_price_cents → deal with self-baseline
+  it('fires: cheapest 100¢ ≤ max_price_cents 200¢ → discountPct=0, baselineCents=candidate price', () => {
+    const candidate = makeProduct(100);
+    const cohort = Array.from({ length: 3 }, () => makeProduct(300));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 200 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.id).toBe(candidate.id);
+    expect(result!.product.price.cents).toBe(100);    // integer cents
+    expect(result!.discountPct).toBe(0);               // no discount relative to a baseline
+    expect(result!.savingsCents).toBe(0);              // no savings relative to a baseline
+    expect(result!.baselineCents).toBe(100);           // self-baseline = candidate price
+  });
+
+  // Case 2: cheapest > max_price_cents → null
+  it('no deal: cheapest 201¢ > max_price_cents 200¢ → returns null', () => {
+    const candidate = makeProduct(201);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(500));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 200 }),
+    );
+
+    expect(result).toBeNull();
+  });
+
+  // Case 3: single listing (thin market that would fail discount-mode min_cohort) → still deals
+  it('thin market: single listing at 50¢ ≤ max_price_cents 100¢ → deal (no min_cohort guard)', () => {
+    const candidate = makeProduct(50);
+
+    const result = evaluateBlueprint(
+      [candidate],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 100 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.price.cents).toBe(50);
+    expect(result!.cohortSize).toBe(1);   // total passing listings = 1 (informational)
+    expect(result!.discountPct).toBe(0);
+  });
+
+  // Case 4: condition/foil filter still drops listings in price mode — the next
+  // passing listing after the excluded one becomes the candidate
+  it('condition filter still active: Poor copy at 5¢ excluded → 150¢ NM copy is candidate', () => {
+    const poor = makeProduct(5, { condition: 'Poor' });
+    const nmCandidate = makeProduct(150, { condition: 'Near Mint' });
+    const nmCohort = Array.from({ length: 3 }, () =>
+      makeProduct(500, { condition: 'Near Mint' }),
+    );
+
+    const result = evaluateBlueprint(
+      [poor, nmCandidate, ...nmCohort],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 200, min_condition: 'Near Mint' }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.id).not.toBe(poor.id);
+    expect(result!.product.id).toBe(nmCandidate.id);
+    expect(result!.product.price.cents).toBe(150);
+  });
+
+  // Case 5: max_price_cents is null → returns null (no ceiling configured)
+  it('max_price_cents null → returns null (no ceiling to test against)', () => {
+    const candidate = makeProduct(50);
+
+    const result = evaluateBlueprint(
+      [candidate],
+      defaultSettings({ detection_mode: 'price', max_price_cents: null }),
+    );
+
+    expect(result).toBeNull();
+  });
+
+  // Case 6: anti-penny floors do NOT block price mode
+  // 50¢ candidate with max_price_cents=100¢, but min_price_cents=200¢ → still a deal
+  it('anti-penny floor ignored: 50¢ candidate, max_price_cents=100¢, min_price_cents=200¢ → deal', () => {
+    const candidate = makeProduct(50);
+
+    const result = evaluateBlueprint(
+      [candidate],
+      defaultSettings({
+        detection_mode: 'price',
+        max_price_cents: 100,
+        min_price_cents: 200,      // would block in discount mode, not in price mode
+        min_savings_cents: 500,    // also would block in discount mode
+      }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.price.cents).toBe(50);
+    expect(result!.discountPct).toBe(0);
+  });
+
+  // Case 7: regression — discount mode still behaves identically when detection_mode='discount'
+  it('regression: discount mode unchanged — 16¢ vs median 32¢ at threshold 50 fires', () => {
+    const candidate = makeProduct(16);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint(
+      [candidate, ...cohort],
+      defaultSettings({ detection_mode: 'discount' }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.price.cents).toBe(16);
+    expect(result!.baselineCents).toBe(32);
+    expect(result!.discountPct).toBe(50);
+    expect(result!.savingsCents).toBe(16);
+    expect(result!.cohortSize).toBe(10);
+  });
+
+  // Boundary: candidate exactly at max_price_cents → fires (inclusive ≤)
+  it('boundary: candidate exactly at max_price_cents → deal (inclusive <=)', () => {
+    const candidate = makeProduct(200);
+
+    const result = evaluateBlueprint(
+      [candidate],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 200 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.product.price.cents).toBe(200);
+    expect(result!.baselineCents).toBe(200);
+  });
+
+  // cohortSize reflects total passing listings (informational)
+  it('cohortSize equals total passing listings (informational, includes candidate)', () => {
+    const candidate = makeProduct(50);
+    const others = Array.from({ length: 4 }, () => makeProduct(300));
+
+    const result = evaluateBlueprint(
+      [candidate, ...others],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 100 }),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.cohortSize).toBe(5); // 1 candidate + 4 others, all pass filters
+  });
+
+  // All listings filtered out → returns null without crashing
+  it('all listings filtered out by condition → returns null', () => {
+    const products = Array.from({ length: 5 }, () =>
+      makeProduct(5, { condition: 'Poor' }),
+    );
+
+    const result = evaluateBlueprint(
+      products,
+      defaultSettings({ detection_mode: 'price', max_price_cents: 100, min_condition: 'Near Mint' }),
+    );
+
+    expect(result).toBeNull();
   });
 });

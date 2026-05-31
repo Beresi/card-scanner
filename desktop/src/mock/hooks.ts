@@ -266,16 +266,16 @@ function _resetField(id: number, field: keyof WatchItem) {
 }
 
 function _addItem(
-  partial: Pick<WatchItem, 'type' | 'cardtrader_id' | 'label' | 'game_id'>,
+  partial: Pick<WatchItem, 'type' | 'label' | 'game_id'> & { cardtrader_id?: number | null },
 ) {
   const now = _nowStr();
   const newItem: WatchItem = {
     id: _nextWatchlistId++,
     type: partial.type,
-    cardtrader_id: partial.cardtrader_id,
+    cardtrader_id: partial.cardtrader_id ?? null,
     label: partial.label,
     game_id: partial.game_id,
-    // All override columns null — new tickets are born inheriting
+    // All override columns null — new tickets are born inheriting (§9a)
     min_condition: null,
     foil_pref: null,
     allow_graded: null,
@@ -285,6 +285,10 @@ function _addItem(
     telegram_min_discount_pct: null,
     telegram_max_price_cents: null,
     telegram_min_savings_cents: null,
+    detection_mode: null,
+    max_price_cents: null,
+    card_name_norm: null,
+    expansion_filter: null,
     active: 1,
     created_at: now,
     updated_at: now,

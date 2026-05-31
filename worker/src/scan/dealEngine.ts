@@ -6,8 +6,12 @@
  * resolveEffective, PRD §9a), decides whether the cheapest qualifying copy
  * is an underpriced deal and by how much.
  *
- * Algorithm: filter → price-sort ascending → thin-market guard → median
- * baseline of the next-cheapest cohort (candidate excluded) → threshold gate.
+ * Two detection modes (settings.detection_mode):
+ *  - 'discount' (default): filter → price-sort → thin-market guard → median
+ *    baseline of the next-cheapest cohort (candidate excluded) → threshold gate.
+ *  - 'price': filter → price-sort → candidate = cheapest passing copy → deal
+ *    when candidate.cents <= settings.max_price_cents. No thin-market guard;
+ *    no floor gates. Self-baseline encoding for the deals row (see below).
  *
  * All money is integer cents throughout — no floats. The authoritative verdict
  * gate is the cents comparison, not the rounded discountPct.
@@ -70,16 +74,22 @@ function foilMatches(
 /**
  * Evaluate one blueprint's listings against resolved effective settings.
  *
- * Returns a DealResult when ALL three conditions hold:
+ * Dispatches on settings.detection_mode:
+ *
+ * 'discount' (default) — Returns a DealResult when ALL three conditions hold:
  *  1. Candidate price ≤ threshold_pct % of the cohort median (% gate).
  *  2. Candidate price ≥ min_price_cents (absolute price floor — suppresses bulk/penny-card
  *     false positives where the savings are trivially small in dollar terms).
  *  3. (Baseline − candidate) ≥ min_savings_cents (absolute savings floor — same guard).
  *
- * The authoritative verdict is the integer-cents comparison for all three conditions;
- * the rounded discountPct is informational only and never gates the verdict.
+ *  The authoritative verdict is the integer-cents comparison for all three conditions;
+ *  the rounded discountPct is informational only and never gates the verdict.
  *
- * Returns null on thin-market or no-deal.
+ *  Returns null on thin-market or no-deal.
+ *
+ * 'price' — Returns a DealResult when candidate.price.cents <= settings.max_price_cents.
+ *  No thin-market guard (a single listing can still be a deal).
+ *  Returns null when settings.max_price_cents is null (no ceiling configured).
  *
  * Pure: same inputs → same output. No side effects.
  */
@@ -116,12 +126,37 @@ export function evaluateBlueprint(
   const sorted = [...filtered].sort((a, b) => a.price.cents - b.price.cents);
 
   // ------------------------------------------------------------------
-  // 3. Thin-market guard: need candidate PLUS at least min_cohort comparators.
+  // 3. Branch on detection mode.
+  // ------------------------------------------------------------------
+  if (settings.detection_mode === 'price') {
+    return evaluatePriceMode(sorted, settings);
+  }
+
+  // Default: 'discount' mode — original 3-gate path.
+  return evaluateDiscountMode(sorted, settings);
+}
+
+// ---------------------------------------------------------------------------
+// Discount mode (default)
+// ---------------------------------------------------------------------------
+
+/**
+ * Original discount-mode evaluation — thin-market guard, cohort median
+ * baseline, and 3-gate verdict (%, price floor, savings floor).
+ *
+ * Receives the already-filtered, price-sorted array from evaluateBlueprint.
+ */
+function evaluateDiscountMode(
+  sorted: Product[],
+  settings: EffectiveSettings,
+): DealResult | null {
+  // ------------------------------------------------------------------
+  // Thin-market guard: need candidate PLUS at least min_cohort comparators.
   // ------------------------------------------------------------------
   if (sorted.length < settings.min_cohort + 1) {return null;}
 
   // ------------------------------------------------------------------
-  // 4. Candidate is sorted[0]; cohort is the NEXT cheapest (candidate excluded).
+  // Candidate is sorted[0]; cohort is the NEXT cheapest (candidate excluded).
   //    Cohort slice starts at index 1 — never 0. Including the candidate
   //    would drag the baseline toward the very price being tested.
   // ------------------------------------------------------------------
@@ -130,12 +165,12 @@ export function evaluateBlueprint(
   if (cohort.length < settings.min_cohort) {return null;}
 
   // ------------------------------------------------------------------
-  // 5. Median baseline — integer cents, never a float.
+  // Median baseline — integer cents, never a float.
   // ------------------------------------------------------------------
   const baselineCents = median(cohort.map((p) => p.price.cents));
 
   // ------------------------------------------------------------------
-  // 6. Discount + verdict.
+  // Discount + verdict.
   //
   //    All three conditions must hold (integer-cents comparisons only —
   //    NEVER branch on the rounded discountPct):
@@ -164,5 +199,60 @@ export function evaluateBlueprint(
     cohortSize: cohort.length,
     discountPct,
     savingsCents,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Price mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Absolute-price detection mode — fires when the cheapest qualifying copy
+ * is at or below the configured price ceiling.
+ *
+ * Key differences from discount mode:
+ *  - No thin-market guard: a single listing qualifies (there is no cohort
+ *    median to compute, so the market depth is irrelevant).
+ *  - Anti-penny floors (min_price_cents, min_savings_cents) do NOT apply:
+ *    the explicit ceiling IS the price intent, and min_savings_cents is
+ *    meaningless without a discount baseline.
+ *  - If settings.max_price_cents is null, there is no ceiling to test against
+ *    and the item has no actionable price mode configured — return null.
+ *
+ * Self-baseline encoding for the deals row (all three columns are NOT NULL):
+ *  - baselineCents = candidate.price.cents  (self-reference; no external median)
+ *  - discountPct   = 0                      (no discount relative to a baseline)
+ *  - savingsCents  = 0                      (no savings relative to a baseline)
+ *  - cohortSize    = sorted.length          (informational: total passing listings)
+ *
+ * The Telegram discount gate will not fire for price-mode deals (discountPct=0);
+ * the importance bypass or a per-item telegram_max_price_cents cap are the
+ * relevant Telegram controls for price-mode items.
+ *
+ * Receives the already-filtered, price-sorted array from evaluateBlueprint.
+ */
+function evaluatePriceMode(
+  sorted: Product[],
+  settings: EffectiveSettings,
+): DealResult | null {
+  // Price mode requires a ceiling; without one there is nothing to test.
+  if (settings.max_price_cents === null) {return null;}
+
+  // No listings pass the condition/foil/graded filters → no candidate.
+  if (sorted.length === 0) {return null;}
+
+  const candidate = sorted[0];
+  const isDeal = candidate.price.cents <= settings.max_price_cents;
+
+  if (!isDeal) {return null;}
+
+  // Self-baseline: baseline = candidate price, discount = 0, savings = 0.
+  // cohortSize = total passing listings (informational; includes candidate).
+  return {
+    product: candidate,
+    baselineCents: candidate.price.cents,
+    cohortSize: sorted.length,
+    discountPct: 0,
+    savingsCents: 0,
   };
 }

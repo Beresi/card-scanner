@@ -102,7 +102,8 @@ app.get('/api/health', async (c) => {
     const watchlist = await listActiveWatchlist(c.env.DB);
     const activeExpansionIds = watchlist
       .filter((w) => w.type === 'expansion')
-      .map((w) => w.cardtrader_id);
+      .map((w) => w.cardtrader_id)
+      .filter((id): id is number => id !== null);
 
     scan_mode = config.scan_mode;
     scan_total = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);

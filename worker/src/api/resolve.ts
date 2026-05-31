@@ -46,7 +46,9 @@ import {
   syncExpansions,
   syncBlueprints,
   expansionsStale,
+  countCatalogProgress,
 } from '../db/repo';
+import { normalizeCardName } from '../scan/cardName';
 import { parseIntParam } from './validate';
 
 // ---------------------------------------------------------------------------
@@ -219,6 +221,64 @@ export function createResolveRouter(deps?: ResolveDeps): Hono<{ Bindings: Env }>
 
       const rows = await searchBlueprints(db, expansion_id, q);
       return c.json(rows);
+    } catch (err) {
+      return handleError(err, c);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /cards — cache-only cross-set card-name search (no CardTrader calls)
+  //
+  // Searches blueprints.name_norm for distinct card names matching the query.
+  // Returns { name, printings, sets } for each match (LIMIT 50).
+  // q < 2 trimmed chars → [].  Empty cache → [].  Never 502.
+  // -------------------------------------------------------------------------
+
+  router.get('/cards', async (c) => {
+    try {
+      const rawQ = c.req.query('q') ?? '';
+      const trimmed = rawQ.trim();
+
+      // Short query — nothing useful to search for yet.
+      if (trimmed.length < 2) {
+        return c.json([]);
+      }
+
+      const normalizedQ = normalizeCardName(trimmed);
+
+      // Inline query: GROUP BY name_norm for distinct names.
+      // Only bound placeholders — user value is never interpolated.
+      const { results } = await c.env.DB
+        .prepare(
+          `SELECT MIN(name) AS name,
+                  COUNT(*) AS printings,
+                  COUNT(DISTINCT expansion_id) AS sets
+             FROM blueprints
+            WHERE name_norm LIKE '%' || ? || '%'
+            GROUP BY name_norm
+            ORDER BY name_norm
+            LIMIT 50`,
+        )
+        .bind(normalizedQ)
+        .all<{ name: string; printings: number; sets: number }>();
+
+      return c.json(results);
+    } catch (err) {
+      return handleError(err, c);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /catalog-progress — how many MTG expansions have been catalog-synced
+  //
+  // Returns { total, synced } so the UI can show "N of M sets synced."
+  // Cache-only — never calls CardTrader.
+  // -------------------------------------------------------------------------
+
+  router.get('/catalog-progress', async (c) => {
+    try {
+      const progress = await countCatalogProgress(c.env.DB);
+      return c.json(progress);
     } catch (err) {
       return handleError(err, c);
     }

@@ -115,7 +115,8 @@ testApp.get('/api/health', async (c) => {
     const watchlist = await listActiveWatchlist(c.env.DB);
     const activeExpansionIds = watchlist
       .filter((w) => w.type === 'expansion')
-      .map((w) => w.cardtrader_id);
+      .map((w) => w.cardtrader_id)
+      .filter((id): id is number => id !== null);
     scan_mode = config.scan_mode;
     scan_total = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
     scan_done = config.scan_cycle_started_at !== null
@@ -447,7 +448,18 @@ describe('POST /api/watchlist', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 400 when type is invalid', async () => {
+  it('returns 400 when type is invalid (unknown string)', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await POST(env, `${BASE}/api/watchlist`, {
+      type: 'unknown_type',
+      cardtrader_id: 10050,
+      label: 'Black Lotus',
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when type=card but card_name is missing', async () => {
     const { db } = makeD1();
     const env = makeEnv(db);
     const res = await POST(env, `${BASE}/api/watchlist`, {

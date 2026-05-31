@@ -26,10 +26,11 @@ import { Select }    from '../../components/Select';
 import { Slider }    from '../../components/Slider';
 import { Status }    from '../../components/Status';
 import { Switch }    from '../../components/Switch';
-import { useConfig, useConfigMutation } from '../../api/hooks';
+import { useCatalogProgress, useConfig, useConfigMutation } from '../../api/hooks';
 import type {
   Condition,
   Density,
+  DetectionMode,
   FontChoice,
   FoilPref,
   Importance,
@@ -106,6 +107,11 @@ const IMPORTANCE_OPTIONS: { value: Importance; label: string }[] = [
 const SCAN_MODE_OPTIONS: { value: ScanMode; label: string }[] = [
   { value: 'chunked',  label: 'Chunked (free)' },
   { value: 'wholeset', label: 'Whole-set (paid)' },
+];
+
+const DETECTION_MODE_OPTIONS: { value: DetectionMode; label: string }[] = [
+  { value: 'discount', label: 'Discount %' },
+  { value: 'price',    label: 'Price ≤' },
 ];
 
 const CURRENCY_OPTIONS: { value: string; label: string }[] = [
@@ -239,6 +245,7 @@ export interface SettingsProps {
 export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   const { data: config } = useConfig();
   const cfg = useConfigMutation();
+  const { data: catalogProg } = useCatalogProgress();
 
   // Active tab — ephemeral UI state only.
   const [tab, setTab] = useState<SettingsTab>('appearance');
@@ -415,6 +422,33 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                     size="sm"
                   />
                 </Row>
+
+                <Row label="Default detection mode" hint="discount % vs absolute price">
+                  <Segmented
+                    value={c.default_detection_mode}
+                    options={DETECTION_MODE_OPTIONS as { value: string; label: string }[]}
+                    onChange={(v) => cfg.mutate({ default_detection_mode: v as DetectionMode })}
+                    size="sm"
+                  />
+                </Row>
+
+                <Row
+                  label="Default max price"
+                  hint="price-mode cap inherited by new items · empty = no default cap"
+                >
+                  <NumInput
+                    value={c.default_max_price_cents != null ? c.default_max_price_cents / 100 : 0}
+                    min={0}
+                    max={100000}
+                    onChange={(v) =>
+                      cfg.mutate({
+                        default_max_price_cents: v > 0 ? Math.round(v * 100) : null,
+                      })
+                    }
+                    suffix={c.currency}
+                    aria-label="Default maximum price cap"
+                  />
+                </Row>
               </div>
             </Panel>
 
@@ -452,6 +486,49 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   suffix={c.currency}
                   aria-label="Minimum absolute savings"
                 />
+              </Row>
+            </Panel>
+
+            <Panel title="Catalog sync" className="set-panel">
+              <p className="set-blurb">
+                Syncs set blueprints into a local catalog so you can watch cards by name across all
+                printings. Full sync is gradual — a few sets per scan run. Enable and let it build up
+                over time.
+              </p>
+
+              <Row label="Enable catalog sync" hint="pulls blueprint lists into the local catalog">
+                <Switch
+                  on={c.catalog_sync_enabled === 1}
+                  onChange={(v) => cfg.mutate({ catalog_sync_enabled: v ? 1 : 0 })}
+                  label="Catalog sync enabled"
+                  aria-label="Enable catalog sync"
+                />
+              </Row>
+
+              <Row
+                label="Sets per run"
+                hint="blueprint exports per scan tick · keep low to stay within the 50-req budget"
+              >
+                <NumInput
+                  value={c.catalog_max_exports_per_run}
+                  min={1}
+                  max={10}
+                  onChange={(v) => cfg.mutate({ catalog_max_exports_per_run: Math.round(v) })}
+                  suffix="sets"
+                  aria-label="Catalog sets exported per scan run"
+                />
+              </Row>
+
+              <Row label="Sync progress" hint="read-only">
+                <span
+                  className="cb-mono"
+                  style={{ fontSize: 12, color: 'var(--text-dim)' }}
+                  aria-live="polite"
+                >
+                  {catalogProg != null
+                    ? `${catalogProg.synced} / ${catalogProg.total} sets synced`
+                    : '—'}
+                </span>
               </Row>
             </Panel>
           </>

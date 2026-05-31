@@ -44,7 +44,20 @@ const CONFIG_PATCH_FIELDS = [
   'font',
   'deal_retention_days',
   'timezone',
+  // Detection-mode defaults + catalog controls (migration 0005)
+  'default_detection_mode',
+  'default_max_price_cents',
+  'catalog_sync_enabled',
+  'catalog_max_exports_per_run',
 ] as const;
+
+// Valid detection modes for the config default.
+const DETECTION_MODES = ['discount', 'price'] as const;
+
+// Maximum catalog_max_exports_per_run — protect the subrequest budget.
+// Each export is one CardTrader API call; free tier has ~50 subrequests/invocation.
+const MAX_CATALOG_EXPORTS_PER_RUN = 10;
+const MAX_DEFAULT_PRICE_CENTS = 10_000_000; // $100,000 ceiling for default_max_price_cents
 
 // ---------------------------------------------------------------------------
 // Error mapping — validate errors → 400, unexpected → 500 (no internals).
@@ -82,6 +95,44 @@ configRouter.patch('/', async (c) => {
       body = await c.req.json<Record<string, unknown>>();
     } catch {
       return c.json({ error: 'invalid_request' }, 400);
+    }
+
+    // ── validate migration 0005 fields before allow-listing ──────────────────
+
+    // default_detection_mode must be 'discount' or 'price'.
+    if (body['default_detection_mode'] !== undefined) {
+      if (!(DETECTION_MODES as readonly string[]).includes(body['default_detection_mode'] as string)) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // default_max_price_cents: non-negative integer (≤ ceiling) or null.
+    if (body['default_max_price_cents'] !== undefined && body['default_max_price_cents'] !== null) {
+      const mpc = body['default_max_price_cents'];
+      if (!Number.isInteger(mpc) || typeof mpc !== 'number' || mpc < 0 || mpc > MAX_DEFAULT_PRICE_CENTS) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // catalog_sync_enabled: 0, 1, or boolean (coerce to 0/1).
+    if (body['catalog_sync_enabled'] !== undefined) {
+      const cse = body['catalog_sync_enabled'];
+      if (cse === true)  { body = { ...body, catalog_sync_enabled: 1 }; }
+      else if (cse === false) { body = { ...body, catalog_sync_enabled: 0 }; }
+      else if (cse !== 0 && cse !== 1) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // catalog_max_exports_per_run: positive integer, capped at MAX_CATALOG_EXPORTS_PER_RUN.
+    if (body['catalog_max_exports_per_run'] !== undefined) {
+      const cme = body['catalog_max_exports_per_run'];
+      if (!Number.isInteger(cme) || typeof cme !== 'number' || cme <= 0) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      if (cme > MAX_CATALOG_EXPORTS_PER_RUN) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
     }
 
     const patch = pickAllowed<ConfigRow>(body, CONFIG_PATCH_FIELDS);

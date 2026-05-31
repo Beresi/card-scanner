@@ -49,10 +49,14 @@ import {
   countBlueprintsForExpansion,
   syncBlueprints,
   selectBlueprintsToScan,
+  selectBlueprintsToScanByIds,
   markBlueprintsScanned,
   getLatestFinishedScanAt,
   countActiveExpansionBlueprints,
   countScannedThisCycle,
+  resolveCardBlueprints,
+  selectNextCatalogExpansions,
+  markExpansionCatalogSynced,
 } from '../db/repo';
 import { resolveEffective } from '../db/resolve';
 import { shouldNotify } from '../telegram/routing';
@@ -91,6 +95,18 @@ export interface ScanSummary {
 export interface ScanDeps {
   createClient?: typeof createCardTraderClient;
 }
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum blueprint ids resolved per card-type watchlist item.
+ * A popular name (e.g. "Lightning Bolt") may exist in hundreds of sets;
+ * cap to keep the rotation budget manageable and prevent one card from
+ * consuming the whole scan batch.
+ */
+const MAX_CARD_BLUEPRINTS_PER_ITEM = 200;
 
 // ---------------------------------------------------------------------------
 // runScan — the one entry point both callers use
@@ -260,6 +276,7 @@ interface WholesetCallbacks extends ScanCallbacks {
 /**
  * Wholeset scan mode — one big marketplaceProducts({expansionId}) call per
  * expansion item. For blueprint items, one per-blueprint call (unchanged).
+ * For card items, resolve to blueprint ids and scan each individually.
  *
  * Self-throttle: if the trigger is 'cron' AND the last finished scan was within
  * WHOLESET_MIN_INTERVAL_MINUTES, skip (log + call onSkip) and return immediately
@@ -288,16 +305,69 @@ async function runWholeset(
   }
 
   for (const item of watchlist) {
+    if (item.type === 'card') {
+      // Card items: resolve to blueprint ids and scan each individually.
+      await runWholesetCardItem(client, item, config, db, callbacks);
+      continue;
+    }
     try {
       await scanItem(client, item, config, db, callbacks);
     } catch (err) {
-      console.error('[scanner] blueprint skipped (wholeset)', {
+      console.error('[scanner] item skipped (wholeset)', {
         watchlistId: item.id,
         watchlistType: item.type,
         cardtraderId: item.cardtrader_id,
         error: err instanceof Error ? err.message : String(err),
       });
       continue;
+    }
+  }
+}
+
+/**
+ * Wholeset helper for a single card-type watchlist item.
+ * Resolves the card name to blueprint ids (capped), then scans each via
+ * scanBlueprintById. Errors per-blueprint are caught and skipped; the item
+ * as a whole is non-fatal.
+ */
+async function runWholesetCardItem(
+  client: CardTraderClient,
+  item: WatchlistRow,
+  config: ConfigRow,
+  db: D1Database,
+  callbacks: ScanCallbacks,
+): Promise<void> {
+  if (!item.card_name_norm) {
+    console.error('[scanner] card item missing card_name_norm', { watchlistId: item.id });
+    return;
+  }
+
+  const expansionIds = parseExpansionFilter(item.expansion_filter);
+  let resolved: { id: number; expansion_id: number }[];
+  try {
+    resolved = await resolveCardBlueprints(db, item.card_name_norm, expansionIds);
+  } catch (err) {
+    console.error('[scanner] resolveCardBlueprints failed (wholeset card item)', {
+      watchlistId: item.id,
+      cardNameNorm: item.card_name_norm,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  // Cap resolved ids so one ubiquitous name can't flood the scan.
+  const cappedIds = resolved.slice(0, MAX_CARD_BLUEPRINTS_PER_ITEM).map((r) => r.id);
+
+  for (const bpId of cappedIds) {
+    try {
+      await scanBlueprintById(bpId, client, item, config, db, callbacks);
+    } catch (err) {
+      console.error('[scanner] card blueprint skipped (wholeset)', {
+        blueprintId: bpId,
+        watchlistId: item.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Non-fatal; continue to next blueprint.
     }
   }
 }
@@ -325,15 +395,23 @@ const CHUNKED_RUN_BUDGET_MS = 20_000;
 const MARK_FLUSH_EVERY = 8;
 
 /**
- * Chunked scan mode — rotates through blueprints across all active expansions,
- * scanning at most config.scan_batch_size blueprints per run.
+ * Chunked scan mode — rotates through blueprints across all active expansions
+ * and card-name items, scanning at most config.scan_batch_size blueprints per run.
  *
  * Algorithm:
- *  1. Split watchlist into blueprint-type items and expansion-type items.
+ *  0. Catalog-sync background step (gated on config.catalog_sync_enabled): pull
+ *     up to catalog_max_exports_per_run unsynced expansions and export their
+ *     blueprints into the local catalog.
+ *  1. Split watchlist into blueprint / expansion / card items.
  *  2. Warm expansion blueprint caches (at most MAX_CACHE_WARMUPS_PER_RUN calls).
  *  3. Scan blueprint-type items directly (no rotation; few, explicit cards).
- *  4. With remaining budget, rotate expansion blueprints via last_scanned_at cursor.
+ *  4. With remaining budget, rotate expansion + card-derived blueprints via
+ *     last_scanned_at cursor under one shared remaining budget.
  *  5. Mark all attempted blueprints scanned so the rotation advances.
+ *
+ * Owner precedence: when a blueprint belongs to both a watched expansion and a
+ * card-name item, the expansion item's settings take precedence (it is more
+ * specific — the user explicitly added the full set to their watchlist).
  */
 async function runChunked(
   client: CardTraderClient,
@@ -346,12 +424,59 @@ async function runChunked(
 
   const blueprintItems = watchlist.filter((w) => w.type === 'blueprint');
   const expansionItems = watchlist.filter((w) => w.type === 'expansion');
+  const cardItems      = watchlist.filter((w) => w.type === 'card');
+
+  // Step 0: Catalog-sync background step — fill the local blueprint catalog so
+  // card-name items can resolve to blueprint ids. Gated on config flag.
+  // Each blueprintsExport call is tracked through the client onRequest hook, so
+  // api_calls is incremented automatically.
+  if (config.catalog_sync_enabled === 1 && config.catalog_max_exports_per_run > 0) {
+    try {
+      const toSync = await selectNextCatalogExpansions(db, config.catalog_max_exports_per_run);
+      for (const expId of toSync) {
+        try {
+          const blueprints = await client.blueprintsExport(expId);
+          await syncBlueprints(
+            db,
+            blueprints.map((bp) => ({
+              id: bp.id,
+              expansion_id: expId,
+              name: bp.name,
+              scryfall_id: bp.scryfall_id ?? null,
+              image_url: bp.image_url ?? null,
+            })),
+          );
+          await markExpansionCatalogSynced(db, expId);
+          console.info('[scanner] catalog sync: exported expansion', {
+            expansionId: expId,
+            count: blueprints.length,
+          });
+        } catch (err) {
+          // Non-fatal: do NOT mark synced on error so it retries next run.
+          console.error('[scanner] catalog sync: export failed (non-fatal)', {
+            expansionId: expId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    } catch (catalogErr) {
+      // selectNextCatalogExpansions failure is non-fatal — never abort the scan.
+      console.error('[scanner] catalog sync: selectNextCatalogExpansions failed (non-fatal)', {
+        error: catalogErr instanceof Error ? catalogErr.message : String(catalogErr),
+      });
+    }
+  }
 
   // Cycle management — track "X of Y scanned this sweep".
   // A cycle = one full pass through all watched expansion blueprints.
   // Must run before the rotation so the cycleStart anchor is fresh before we
   // advance last_scanned_at on this batch.
-  const activeExpansionIds = expansionItems.map((w) => w.cardtrader_id);
+  // Only expansion-derived blueprints are tracked in the cycle (card items
+  // contribute to the same cursor but not to the cycle denominator).
+  const activeExpansionIds = expansionItems
+    .map((w) => w.cardtrader_id)
+    .filter((id): id is number => id !== null);
+
   if (activeExpansionIds.length > 0) {
     try {
       const total = await countActiveExpansionBlueprints(db, activeExpansionIds);
@@ -386,15 +511,17 @@ async function runChunked(
   let warmups = 0;
   for (const item of expansionItems) {
     if (warmups >= MAX_CACHE_WARMUPS_PER_RUN) { break; }
-    const count = await countBlueprintsForExpansion(db, item.cardtrader_id);
+    // expansionItems always have a non-null cardtrader_id (expansion id).
+    const expId = item.cardtrader_id as number;
+    const count = await countBlueprintsForExpansion(db, expId);
     if (count === 0) {
       try {
-        const blueprints = await client.blueprintsExport(item.cardtrader_id);
+        const blueprints = await client.blueprintsExport(expId);
         await syncBlueprints(
           db,
           blueprints.map((bp) => ({
             id: bp.id,
-            expansion_id: item.cardtrader_id,
+            expansion_id: expId,
             name: bp.name,
             scryfall_id: bp.scryfall_id ?? null,
             image_url: bp.image_url ?? null,
@@ -402,13 +529,13 @@ async function runChunked(
         );
         warmups++;
         console.info('[scanner] warmed blueprint cache', {
-          expansionId: item.cardtrader_id,
+          expansionId: expId,
           count: blueprints.length,
         });
       } catch (err) {
         // Non-fatal: cache warms on the next run.
         console.error('[scanner] blueprint cache warmup failed', {
-          expansionId: item.cardtrader_id,
+          expansionId: expId,
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -433,19 +560,102 @@ async function runChunked(
     }
   }
 
-  // Step 3: Rotate expansion blueprints with remaining budget.
+  // Step 3: Rotate expansion + card-derived blueprints with remaining budget.
+  // Build owner maps:
+  //   expansionOwnerMap: expansion_id → WatchlistRow (for expansion items)
+  //   cardOwnerMap: blueprint_id → WatchlistRow (for card items)
+  // Precedence: expansion item wins if a blueprint appears in both — the user
+  // explicitly added the full set, so its settings are more specific.
   const remaining = budget - used;
-  if (remaining <= 0 || expansionItems.length === 0) { return; }
+  if (remaining <= 0 && expansionItems.length === 0 && cardItems.length === 0) { return; }
 
-  const expansionIds = expansionItems.map((w) => w.cardtrader_id);
-
-  // Build a map from expansion_id to the owning watchlist item for resolveEffective.
-  const expansionMap = new Map<number, WatchlistRow>();
+  const expansionOwnerMap = new Map<number, WatchlistRow>();
   for (const item of expansionItems) {
-    expansionMap.set(item.cardtrader_id, item);
+    // expansion items always have a non-null cardtrader_id
+    expansionOwnerMap.set(item.cardtrader_id as number, item);
   }
 
-  const toScan = await selectBlueprintsToScan(db, expansionIds, remaining);
+  // Resolve card items → blueprint id sets, build blueprint-level owner map.
+  // We collect all card-derived blueprint ids here and dedup before the DB query.
+  const cardOwnerMap = new Map<number, WatchlistRow>();
+
+  for (const item of cardItems) {
+    if (!item.card_name_norm) {
+      console.error('[scanner] card item missing card_name_norm (chunked)', {
+        watchlistId: item.id,
+      });
+      continue;
+    }
+    const expansionIds = parseExpansionFilter(item.expansion_filter);
+    let resolved: { id: number; expansion_id: number }[];
+    try {
+      resolved = await resolveCardBlueprints(db, item.card_name_norm, expansionIds);
+    } catch (err) {
+      console.error('[scanner] resolveCardBlueprints failed (chunked)', {
+        watchlistId: item.id,
+        cardNameNorm: item.card_name_norm,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    // Cap per card item and register in the owner map.
+    const capped = resolved.slice(0, MAX_CARD_BLUEPRINTS_PER_ITEM);
+    for (const bp of capped) {
+      // Only register card item ownership if the blueprint is NOT already owned
+      // by an expansion item (expansion wins on overlap per owner precedence).
+      if (!expansionOwnerMap.has(bp.expansion_id) && !cardOwnerMap.has(bp.id)) {
+        cardOwnerMap.set(bp.id, item);
+      }
+    }
+  }
+
+  const cardBlueprintIds = Array.from(cardOwnerMap.keys());
+
+  // Fetch the rotation candidates for both expansion-derived and card-derived
+  // blueprints under ONE shared remaining-budget. We query them separately and
+  // interleave by last_scanned_at (oldest-first) via a merge sort; in practice
+  // the total is capped so budget exhaustion makes this a non-issue.
+  // Simpler: query expansion ids and card ids together after computing the split.
+
+  const hasExpansions = activeExpansionIds.length > 0;
+  const hasCardBlueprints = cardBlueprintIds.length > 0;
+
+  if (remaining <= 0 || (!hasExpansions && !hasCardBlueprints)) { return; }
+
+  // Fetch separate batches and merge — each query returns at most `remaining`
+  // entries but we need a unified rotation. Use a simple two-pass approach:
+  // fetch both at full `remaining` budget and interleave by last_scanned_at,
+  // then take the first `remaining` items. NULL last_scanned_at sorts first.
+  const [expansionCandidates, cardCandidates] = await Promise.all([
+    hasExpansions
+      ? selectBlueprintsToScan(db, activeExpansionIds, remaining)
+      : Promise.resolve([] as { id: number; expansion_id: number }[]),
+    hasCardBlueprints
+      ? selectBlueprintsToScanByIds(db, cardBlueprintIds, remaining)
+      : Promise.resolve([] as { id: number; expansion_id: number }[]),
+  ]);
+
+  // Merge: null last_scanned_at comes first (we don't have that field here but
+  // the DB queries already return results in the correct order). We merge the
+  // two sorted arrays by stable interleaving — expansion candidates first when
+  // both are from the same "tier" (both null or both timestamped). Since we
+  // can't compare timestamps here (they're not in the returned rows), we use a
+  // round-robin merge preserving each list's internal order.
+  // This is a practical approximation; perfect fairness would require the DB to
+  // return last_scanned_at. The cursor ensures fair long-run progress.
+  const merged = mergeCandidates(expansionCandidates, cardCandidates, remaining);
+
+  // Dedupe: if a blueprint appears in both (expansion + card overlap), keep the
+  // first occurrence (expansion wins — it came first in the merged list).
+  const seen = new Set<number>();
+  const toScan: { id: number; expansion_id: number }[] = [];
+  for (const bp of merged) {
+    if (!seen.has(bp.id)) {
+      seen.add(bp.id);
+      toScan.push(bp);
+    }
+  }
 
   // Mark scanned blueprints in small chunks AS WE GO (not once at the end) and
   // stop at the per-run time budget — so a cron run killed mid-batch still
@@ -465,9 +675,14 @@ async function runChunked(
     // Stop cleanly once the per-run time budget is used.
     if (Date.now() - startMs >= CHUNKED_RUN_BUDGET_MS) { break; }
 
-    const ownerItem = expansionMap.get(bp.expansion_id);
+    // Determine the owner item: expansion item takes precedence over card item.
+    const ownerItem =
+      expansionOwnerMap.get(bp.expansion_id) ??
+      cardOwnerMap.get(bp.id);
+
     if (ownerItem === undefined) {
-      // Expansion no longer active — mark scanned so it doesn't block rotation.
+      // Blueprint no longer owned by any active item — mark scanned so it
+      // doesn't block rotation.
       pending.push(bp.id);
       if (pending.length >= MARK_FLUSH_EVERY) { await flushPending(); }
       continue;
@@ -479,7 +694,7 @@ async function runChunked(
     try {
       await scanBlueprintById(bp.id, client, ownerItem, config, db, callbacks);
     } catch (err) {
-      console.error('[scanner] expansion blueprint skipped (chunked)', {
+      console.error('[scanner] blueprint skipped (chunked rotation)', {
         blueprintId: bp.id,
         expansionId: bp.expansion_id,
         watchlistId: ownerItem.id,
@@ -506,6 +721,9 @@ async function runChunked(
  * the response map (all blueprints in the set).
  * For blueprint items: one marketplaceProducts({blueprintId}) call → one key.
  *
+ * Card items are NOT handled here — they are resolved to blueprint ids and
+ * scanned via scanBlueprintById by the caller (runWholeset / runChunked).
+ *
  * Throws on any fetch or parse failure — the caller catches at the per-item
  * boundary and continues (PRD §13).
  */
@@ -516,6 +734,9 @@ async function scanItem(
   db: D1Database,
   callbacks: ScanCallbacks,
 ): Promise<void> {
+  // cardtrader_id is guaranteed non-null for blueprint and expansion items.
+  const ctId = item.cardtrader_id as number;
+
   const eff = resolveEffective(item, config);
   const foilParam: { foil?: boolean } =
     eff.foil_pref === 'any' ? {} : { foil: eff.foil_pref === 'foil' };
@@ -523,12 +744,12 @@ async function scanItem(
   const response =
     item.type === 'blueprint'
       ? await client.marketplaceProducts({
-          blueprintId: item.cardtrader_id,
+          blueprintId: ctId,
           language: 'en',
           ...foilParam,
         })
       : await client.marketplaceProducts({
-          expansionId: item.cardtrader_id,
+          expansionId: ctId,
           language: 'en',
           ...foilParam,
         });
@@ -543,8 +764,9 @@ async function scanItem(
 }
 
 /**
- * Fetch and evaluate a single blueprint by id for a given expansion watch item.
- * Used by chunked mode for the rotation loop.
+ * Fetch and evaluate a single blueprint by id for a given watchlist item
+ * (expansion or card owner). Used by chunked mode for the rotation loop
+ * and by wholeset mode for card-type items.
  *
  * Throws on fetch/parse failure — caller catches at the per-blueprint boundary.
  */
@@ -629,6 +851,50 @@ async function evaluateAndUpsert(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse the expansion_filter JSON string from a card-type watchlist item.
+ *
+ * Returns:
+ *  - null  if the field is null, the empty string, or '[]' → "all sets"
+ *  - number[] if the JSON parses to a non-empty int array
+ *  - null  if the JSON is malformed (silently treated as "all sets")
+ */
+function parseExpansionFilter(raw: string | null): number[] | null {
+  if (!raw) { return null; }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) { return null; }
+    return parsed as number[];
+  } catch {
+    // Malformed JSON — treat as "all sets" (no filter).
+    return null;
+  }
+}
+
+/**
+ * Merge two sorted blueprint candidate arrays (each already in rotation order)
+ * into a single list of at most `limit` entries using round-robin interleaving.
+ *
+ * Both input arrays are produced by DB queries that already sort correctly
+ * (NULL last_scanned_at first, then oldest first, then id ASC). Round-robin
+ * interleaving preserves each list's internal order while giving both sources
+ * roughly equal representation within each budget window.
+ */
+function mergeCandidates(
+  a: { id: number; expansion_id: number }[],
+  b: { id: number; expansion_id: number }[],
+  limit: number,
+): { id: number; expansion_id: number }[] {
+  const result: { id: number; expansion_id: number }[] = [];
+  let ai = 0;
+  let bi = 0;
+  while (result.length < limit && (ai < a.length || bi < b.length)) {
+    if (ai < a.length) { result.push(a[ai++]); }
+    if (result.length < limit && bi < b.length) { result.push(b[bi++]); }
+  }
+  return result;
+}
 
 function buildSummary(
   runId: number,

@@ -6,29 +6,49 @@
 -- ─── §9 DDL ──────────────────────────────────────────────────────────────────
 
 -- What to scan.
--- Per-ticket override columns (threshold_pct, telegram_*) are NULL = inherit from
--- config at scan time. See §9a and resolveEffective(). New tickets keep these NULL;
--- the new-ticket form is pre-filled from config.new_ticket_* for display only.
+-- Per-ticket override columns (threshold_pct, telegram_*, detection_mode,
+-- max_price_cents) are NULL = inherit from config at scan time. See §9a and
+-- resolveEffective(). New tickets keep these NULL; the new-ticket form is
+-- pre-filled from config.new_ticket_* / config.default_* for display only.
+-- type='card' items watch a card by name across sets; cardtrader_id is NULL
+-- for those rows.  expansion_filter is a JSON int array (NULL/[] = all sets).
 CREATE TABLE IF NOT EXISTS watchlist (
-  id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-  type                      TEXT    NOT NULL CHECK (type IN ('blueprint','expansion')),
-  cardtrader_id             INTEGER NOT NULL,         -- blueprint_id or expansion_id
-  label                     TEXT    NOT NULL,          -- card or set name for display
-  game_id                   INTEGER NOT NULL DEFAULT 1,
-  min_condition             TEXT    NOT NULL DEFAULT 'Near Mint',
-  foil_pref                 TEXT    NOT NULL DEFAULT 'any' CHECK (foil_pref IN ('any','foil','nonfoil')),
-  allow_graded              INTEGER NOT NULL DEFAULT 0,
-  threshold_pct             INTEGER,                  -- NULL → use config.default_threshold_pct
-  importance                TEXT    NOT NULL DEFAULT 'normal' CHECK (importance IN ('high','normal')),
-  telegram_enabled          INTEGER NOT NULL DEFAULT 0,
-  telegram_min_discount_pct INTEGER,                  -- NULL → use config.telegram_min_discount_pct
-  telegram_max_price_cents  INTEGER,                  -- NULL → no cap
-  telegram_min_savings_cents INTEGER,                 -- NULL → no floor
-  active                    INTEGER NOT NULL DEFAULT 1,
-  created_at                TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at                TEXT    NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(type, cardtrader_id, foil_pref)
+  id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- 'card' = watch by name across sets (cardtrader_id = NULL for these rows)
+  type                        TEXT    NOT NULL CHECK (type IN ('blueprint','expansion','card')),
+  cardtrader_id               INTEGER,                   -- blueprint_id or expansion_id; NULL for type='card'
+  label                       TEXT    NOT NULL,          -- card or set name for display
+  game_id                     INTEGER NOT NULL DEFAULT 1,
+  min_condition               TEXT    NOT NULL DEFAULT 'Near Mint',
+  foil_pref                   TEXT    NOT NULL DEFAULT 'any' CHECK (foil_pref IN ('any','foil','nonfoil')),
+  allow_graded                INTEGER NOT NULL DEFAULT 0,
+  threshold_pct               INTEGER,                   -- NULL → use config.default_threshold_pct
+  importance                  TEXT    NOT NULL DEFAULT 'normal' CHECK (importance IN ('high','normal')),
+  telegram_enabled            INTEGER NOT NULL DEFAULT 0,
+  telegram_min_discount_pct   INTEGER,                   -- NULL → use config.telegram_min_discount_pct
+  telegram_max_price_cents    INTEGER,                   -- NULL → no cap
+  telegram_min_savings_cents  INTEGER,                   -- NULL → no floor
+  active                      INTEGER NOT NULL DEFAULT 1,
+  created_at                  TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at                  TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- §9a nullable override columns (migration 0005)
+  detection_mode              TEXT,                      -- NULL → use config.default_detection_mode ('discount'|'price')
+  max_price_cents             INTEGER,                   -- NULL → use config.default_max_price_cents
+  -- card-type identity columns (migration 0005)
+  card_name_norm              TEXT,                      -- normalized name for type='card' items
+  expansion_filter            TEXT                       -- JSON int array of expansion_ids; NULL/[] = all sets
 );
+
+-- Partial unique index for blueprint/expansion items (those that have a cardtrader_id).
+-- Replaces the pre-0005 inline UNIQUE(type, cardtrader_id, foil_pref).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wl_id
+  ON watchlist(type, cardtrader_id, foil_pref)
+  WHERE cardtrader_id IS NOT NULL;
+
+-- Partial unique index for card-type items keyed on normalized name + foil preference.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wl_card
+  ON watchlist(card_name_norm, foil_pref)
+  WHERE type = 'card';
 
 -- Found deals — the in-app feed and the dedupe source of truth.
 -- UNIQUE(product_id) enforces one deal row + one Telegram push per listing, ever.
@@ -123,6 +143,15 @@ CREATE TABLE IF NOT EXISTS config (
   -- expansion blueprints completes (scanned_this_cycle >= total) or on first run.
   scan_cycle_started_at         TEXT,
 
+  -- Detection-mode defaults + catalog controls (migration 0005)
+  -- default_detection_mode / default_max_price_cents are §9a inheritable defaults.
+  default_detection_mode        TEXT    NOT NULL DEFAULT 'discount',  -- 'discount' | 'price'
+  default_max_price_cents       INTEGER,                              -- NULL = no absolute cap
+  -- catalog_sync_enabled: 0 = off; 1 = background blueprintsExport sync each cron run.
+  catalog_sync_enabled          INTEGER NOT NULL DEFAULT 0,
+  -- catalog_max_exports_per_run: blueprintsExport calls per tick; keep ≤ free-tier cap.
+  catalog_max_exports_per_run   INTEGER NOT NULL DEFAULT 1,
+
   updated_at                    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -141,25 +170,32 @@ CREATE TABLE IF NOT EXISTS scan_runs (
 
 -- Caches — used by the add-card UX and display enrichment
 CREATE TABLE IF NOT EXISTS expansions (
-  id        INTEGER PRIMARY KEY,                      -- cardtrader expansion id
-  game_id   INTEGER NOT NULL,
-  code      TEXT,
-  name      TEXT,
-  synced_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  id                    INTEGER PRIMARY KEY,            -- cardtrader expansion id
+  game_id               INTEGER NOT NULL,
+  code                  TEXT,
+  name                  TEXT,
+  synced_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- blueprints_synced_at: UTC timestamp of last blueprintsExport for this expansion.
+  -- NULL = not yet pulled into the local blueprint catalog (catalog-sync cursor, migration 0005).
+  blueprints_synced_at  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS blueprints (
   id             INTEGER PRIMARY KEY,                   -- cardtrader blueprint id
   expansion_id   INTEGER,
   name           TEXT,
+  -- name_norm: lowercase/trimmed name for cross-set catalog search (migration 0005).
+  name_norm      TEXT,
   scryfall_id    TEXT,
   image_url      TEXT,
   synced_at      TEXT NOT NULL DEFAULT (datetime('now')),
   last_scanned_at TEXT                                  -- NULL = never scanned (chunked mode cursor)
 );
 
-CREATE INDEX IF NOT EXISTS idx_blueprints_exp  ON blueprints(expansion_id);
-CREATE INDEX IF NOT EXISTS idx_blueprints_name ON blueprints(name);
+CREATE INDEX IF NOT EXISTS idx_blueprints_exp       ON blueprints(expansion_id);
+CREATE INDEX IF NOT EXISTS idx_blueprints_name      ON blueprints(name);
+-- Normalized-name index for cross-set card-name search (migration 0005).
+CREATE INDEX IF NOT EXISTS idx_blueprints_name_norm ON blueprints(name_norm);
 -- Rotation index for chunked scan: ORDER BY (last_scanned_at IS NULL) DESC, last_scanned_at ASC
 CREATE INDEX IF NOT EXISTS idx_blueprints_exp_scanned ON blueprints(expansion_id, last_scanned_at);
 

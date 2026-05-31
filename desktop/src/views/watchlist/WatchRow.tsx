@@ -23,7 +23,8 @@ import { usePatchWatchItem } from '../../api/hooks';
 import { Icon } from '../../components/Icon';
 import { Switch } from '../../components/Switch';
 import { Tag } from '../../components/Tag';
-import { effImportance, effMinCondition, effThreshold } from './effOf';
+import { effDetectionMode, effImportance, effMinCondition, effThreshold } from './effOf';
+import { usd } from '../../lib/format';
 
 export interface WatchRowProps {
   item: WatchItem;
@@ -66,6 +67,12 @@ const CONFIG_FALLBACK: Config = {
   density: 'comfortable',
   scan_mode: 'chunked',
   scan_batch_size: 40,
+  // Detection mode defaults (§9a)
+  default_detection_mode: 'discount',
+  default_max_price_cents: null,
+  // Catalog sync
+  catalog_sync_enabled: 0,
+  catalog_max_exports_per_run: 1,
   deal_retention_days: 30,
   timezone: null,
   updated_at: null,
@@ -80,9 +87,10 @@ export function WatchRow({
   const patchItem = usePatchWatchItem();
 
   const effectiveConfig = config ?? CONFIG_FALLBACK;
-  const thrEff  = effThreshold(item, effectiveConfig);
-  const condEff = effMinCondition(item, effectiveConfig);
-  const impEff  = effImportance(item, effectiveConfig);
+  const thrEff    = effThreshold(item, effectiveConfig);
+  const condEff   = effMinCondition(item, effectiveConfig);
+  const impEff    = effImportance(item, effectiveConfig);
+  const detectEff = effDetectionMode(item, effectiveConfig);
 
   const selected = isSelected;
 
@@ -132,7 +140,14 @@ export function WatchRow({
           name={item.type === 'expansion' ? 'layers' : 'card'}
           size={15}
           svgProps={{
-            style: { color: item.type === 'expansion' ? 'var(--accent)' : 'var(--text-dim)' },
+            style: {
+              color:
+                item.type === 'expansion'
+                  ? 'var(--accent)'
+                  : item.type === 'card'
+                  ? 'var(--accent-soft)'
+                  : 'var(--text-dim)',
+            },
           }}
         />
       </span>
@@ -140,7 +155,13 @@ export function WatchRow({
       {/* Name + subtext */}
       <span className="wr-name" role="cell">
         <span className="wr-label">{item.label}</span>
-        <span className="wr-exp cb-mono">#{item.cardtrader_id}</span>
+        {item.type === 'card' ? (
+          <span className="wr-exp cb-mono" title="Watching all printings of this card">
+            any printing
+          </span>
+        ) : (
+          <span className="wr-exp cb-mono">#{item.cardtrader_id}</span>
+        )}
       </span>
 
       {/* Condition */}
@@ -155,14 +176,31 @@ export function WatchRow({
         {item.foil_pref ?? effectiveConfig.new_ticket_foil_pref}
       </span>
 
-      {/* Threshold — dim if inherited */}
+      {/* Threshold / detection mode — dim if inherited */}
       <span
         className="wr-c wr-thr"
         role="cell"
-        title={thrEff.inherited ? `inherit · ${thrEff.defaultLabel}` : undefined}
+        title={
+          detectEff.value === 'price'
+            ? 'Price mode — fires when price ≤ max'
+            : thrEff.inherited
+            ? `inherit · ${thrEff.defaultLabel}`
+            : undefined
+        }
         style={{ color: thrEff.inherited ? 'var(--text-faint)' : undefined } as React.CSSProperties}
       >
-        &le;{thrEff.value}%
+        {detectEff.value === 'price' ? (
+          <span
+            className="cb-mono"
+            style={{ fontSize: 10, color: 'var(--accent)', letterSpacing: '0.02em' }}
+          >
+            {item.max_price_cents != null
+              ? `≤ ${usd(item.max_price_cents)}`
+              : 'price'}
+          </span>
+        ) : (
+          <>&le;{thrEff.value}%</>
+        )}
       </span>
 
       {/* Importance */}
