@@ -108,7 +108,7 @@ export function DealFeed() {
               variant={status === 'open' ? 'primary' : 'ghost'}
               onClick={() => setStatus('open')}
               aria-pressed={status === 'open'}
-              title="Show only unseen, undismissed deals"
+              title="Active deals + recently-expired ones (shown for 12h, dimmed, before they auto-hide). Excludes dismissed and sold."
             >
               Open
             </Btn>

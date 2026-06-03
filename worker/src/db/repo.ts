@@ -779,10 +779,20 @@ export async function getDealById(
 }
 
 /**
+ * Hours an EXPIRED deal lingers in the default "open" feed (measured from
+ * retired_at) before it auto-hides. Gives the owner a window to see a superseded
+ * deal — and dismiss it manually — instead of it vanishing silently. 'sold' deals
+ * (listing gone, unbuyable) are NOT granted this grace; they drop out immediately.
+ */
+const EXPIRED_GRACE_HOURS = 12;
+
+/**
  * List deal rows with optional filters.
  *
  * Filters:
- *  - `status`: `'open'` (default, `dismissed = 0`) or `'all'` (no filter).
+ *  - `status`: `'open'` (default) or `'all'` (no filter).
+ *      'open' = active deals PLUS expired deals still inside the
+ *      EXPIRED_GRACE_HOURS window; always excludes dismissed and sold.
  *  - `min_discount`: only rows with `discount_pct >= ?`.
  *  - `watchlist_id`: only rows for this watchlist item.
  *  - `priority`: only rows with this priority value.
@@ -801,10 +811,15 @@ export async function listDeals(
   let sql = `SELECT * FROM deals WHERE 1=1`;
   const binds: unknown[] = [];
 
-  // Default to 'open' — omit dismissed AND retired (sold/expired) rows unless the
-  // caller explicitly asks for all. status='open' is the lifecycle gate (0009).
+  // Default to 'open': active deals + expired deals still inside the grace window
+  // (so superseded deals stay visible briefly before auto-hiding). 'sold' deals and
+  // dismissed deals are always hidden from the open feed. 'all' skips this gate.
   if ((f.status ?? 'open') === 'open') {
-    sql += ` AND dismissed = 0 AND status = 'open'`;
+    sql += ` AND dismissed = 0 AND (
+      status = 'open'
+      OR (status = 'expired' AND retired_at >= datetime('now', ?))
+    )`;
+    binds.push(`-${EXPIRED_GRACE_HOURS} hours`);
   }
   if (f.min_discount !== undefined) {
     sql += ` AND discount_pct >= ?`;

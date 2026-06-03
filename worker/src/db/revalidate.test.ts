@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { revalidateBlueprintDeals, getDealById } from './repo';
+import { revalidateBlueprintDeals, getDealById, listDeals } from './repo';
 import { makeD1, seedDeal, seedWatchlist } from '../api/__test-helpers__/d1';
 import type Database from 'better-sqlite3';
 
@@ -130,5 +130,61 @@ describe('revalidateBlueprintDeals — lifecycle transitions', () => {
     await revalidateBlueprintDeals(db, BP, [], null); // empty listings for BP only
     expect((await getDealById(db, dealIdFor(111)))!.status).toBe('sold');
     expect((await getDealById(db, dealIdFor(777)))!.status).toBe('open'); // untouched
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listDeals open-feed grace window (migration 0009 + expired grace)
+//
+// Expired deals linger in the default 'open' feed for EXPIRED_GRACE_HOURS (12h)
+// after retired_at, then auto-hide. Sold deals never get the grace window.
+// ---------------------------------------------------------------------------
+
+describe('listDeals — expired grace window', () => {
+  /** Mark a seeded deal's lifecycle directly (status + relative retired_at). */
+  function setLifecycle(productId: number, status: string, retiredMod: string): void {
+    raw.prepare(
+      `UPDATE deals SET status=?, retired_at=datetime('now', ?) WHERE product_id=?`,
+    ).run(status, retiredMod, productId);
+  }
+
+  it('shows an expired deal retired just now in the open feed', async () => {
+    seedOpenDeal(111, 180);
+    setLifecycle(111, 'expired', '-1 hours');
+    const open = await listDeals(db, { status: 'open' });
+    expect(open.map((d) => d.product_id)).toContain(111);
+  });
+
+  it('hides an expired deal retired more than 12h ago from the open feed', async () => {
+    seedOpenDeal(111, 180);
+    setLifecycle(111, 'expired', '-13 hours');
+    const open = await listDeals(db, { status: 'open' });
+    expect(open.map((d) => d.product_id)).not.toContain(111);
+    // …but it is still visible under 'all'.
+    const all = await listDeals(db, { status: 'all' });
+    expect(all.map((d) => d.product_id)).toContain(111);
+  });
+
+  it('hides a sold deal from the open feed immediately (no grace)', async () => {
+    seedOpenDeal(111, 180);
+    setLifecycle(111, 'sold', '-1 minutes');
+    const open = await listDeals(db, { status: 'open' });
+    expect(open.map((d) => d.product_id)).not.toContain(111);
+    const all = await listDeals(db, { status: 'all' });
+    expect(all.map((d) => d.product_id)).toContain(111);
+  });
+
+  it('keeps active (open) deals in the feed regardless of the window', async () => {
+    seedOpenDeal(222, 190);
+    const open = await listDeals(db, { status: 'open' });
+    expect(open.map((d) => d.product_id)).toContain(222);
+  });
+
+  it('still hides a dismissed deal even within the grace window', async () => {
+    seedOpenDeal(111, 180);
+    setLifecycle(111, 'expired', '-1 hours');
+    raw.prepare(`UPDATE deals SET dismissed=1 WHERE product_id=111`).run();
+    const open = await listDeals(db, { status: 'open' });
+    expect(open.map((d) => d.product_id)).not.toContain(111);
   });
 });
