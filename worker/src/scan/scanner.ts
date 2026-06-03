@@ -853,6 +853,7 @@ async function evaluateAndUpsert(
       baseline_cents: result.baselineCents,                // integer cents, never float
       second_cheapest_cents: result.secondCheapestCents,   // gap-gate baseline
       gap_pct: result.gapPct,                              // % below next-available copy
+      avg4_cents: result.avg4Cents,                        // mean of next-4-cheapest ("vs avg")
       cohort_size: result.cohortSize,
       discount_pct: result.discountPct,                    // integer percent
       priority: eff.importance,

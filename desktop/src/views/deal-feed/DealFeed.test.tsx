@@ -75,6 +75,7 @@ function makeDeal(overrides: Partial<Deal> = {}): Deal {
     baseline_cents: 2500,
     second_cheapest_cents: null,
     gap_pct: null,
+    avg4_cents: null,
     cohort_size: 10,
     discount_pct: 51,
     priority: 'normal',

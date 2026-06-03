@@ -84,6 +84,9 @@ CREATE TABLE IF NOT EXISTS deals (
   second_cheapest_cents INTEGER,
   -- % the candidate was below second_cheapest_cents (informational; 0 in price mode).
   gap_pct           INTEGER,
+  -- Mean of the next-4-cheapest copies (migration 0010); secondary "vs avg" baseline.
+  -- NULL on legacy rows; = candidate price in price mode.
+  avg4_cents        INTEGER,
   cohort_size       INTEGER NOT NULL,
   discount_pct      INTEGER NOT NULL,
   priority          TEXT    NOT NULL DEFAULT 'normal', -- 'high' | 'normal'

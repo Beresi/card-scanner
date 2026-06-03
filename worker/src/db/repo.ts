@@ -249,6 +249,7 @@ export async function upsertDeal(
          baseline_cents,
          second_cheapest_cents,
          gap_pct,
+         avg4_cents,
          cohort_size,
          discount_pct,
          priority,
@@ -259,7 +260,7 @@ export async function upsertDeal(
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
-         ?,
+         ?, ?,
          datetime('now')
        )
        ON CONFLICT(product_id) DO NOTHING`,
@@ -283,6 +284,7 @@ export async function upsertDeal(
       deal.baseline_cents,
       deal.second_cheapest_cents,
       deal.gap_pct,
+      deal.avg4_cents,
       deal.cohort_size,
       deal.discount_pct,
       deal.priority,

@@ -11,7 +11,7 @@ import { minutesAgo, hoursAgo } from './utils';
 // Literals carry the load-bearing Deal fields; the gap-gate + lifecycle columns
 // (migration 0009) are filled with defaults by the .map() below so the ~24
 // fixtures don't each have to repeat them.
-const _RAW_DEALS: Array<Omit<Deal, 'second_cheapest_cents' | 'gap_pct' | 'status' | 'retired_at'>> = [
+const _RAW_DEALS: Array<Omit<Deal, 'second_cheapest_cents' | 'gap_pct' | 'avg4_cents' | 'status' | 'retired_at'>> = [
   // ── High-priority, very recent (within last 10 min) ─────────────────────
   {
     id: 1000,
@@ -657,11 +657,19 @@ const _RAW_DEALS: Array<Omit<Deal, 'second_cheapest_cents' | 'gap_pct' | 'status
   },
 ];
 
-// All mock deals are 'open' with no recorded gap baseline (legacy-style nulls).
-export const MOCK_DEALS: Deal[] = _RAW_DEALS.map((d): Deal => ({
-  ...d,
-  second_cheapest_cents: null,
-  gap_pct: null,
-  status: 'open',
-  retired_at: null,
-}));
+// Synthesize realistic next-cheapest + avg-of-4 baselines between the candidate
+// price and the median, so mock/dev mode previews the gap-led card design.
+export const MOCK_DEALS: Deal[] = _RAW_DEALS.map((d): Deal => {
+  const span = Math.max(0, d.baseline_cents - d.price_cents);
+  const second = d.price_cents + Math.round(span * 0.35);
+  const avg4 = d.price_cents + Math.round(span * 0.55);
+  const gap = second > 0 ? Math.round((1 - d.price_cents / second) * 100) : 0;
+  return {
+    ...d,
+    second_cheapest_cents: second,
+    gap_pct: gap,
+    avg4_cents: avg4,
+    status: 'open',
+    retired_at: null,
+  };
+});

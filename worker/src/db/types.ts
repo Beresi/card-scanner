@@ -262,6 +262,7 @@ export interface DealInsert {
   baseline_cents: number;     // integer cents, never float
   second_cheapest_cents: number; // gap-gate baseline; price mode = candidate price
   gap_pct: number;            // % below second_cheapest_cents; 0 in price mode
+  avg4_cents: number;         // mean of next-4-cheapest; price mode = candidate price
   cohort_size: number;
   discount_pct: number;       // integer percent
   priority: Importance;
@@ -298,6 +299,7 @@ export interface DealRow {
   baseline_cents: number;
   second_cheapest_cents: number | null; // gap-gate baseline; NULL on legacy rows
   gap_pct: number | null;                // % below 2nd-cheapest; NULL on legacy rows
+  avg4_cents: number | null;             // mean of next-4-cheapest; NULL on legacy rows
   cohort_size: number;
   discount_pct: number;
   priority: Importance;

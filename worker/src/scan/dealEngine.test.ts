@@ -676,6 +676,28 @@ describe('gap-to-next gate — suppresses tightly-packed ladders', () => {
     expect(result).not.toBeNull();
     expect(result!.secondCheapestCents).toBe(299);
     expect(result!.gapPct).toBe(29); // round(1 - 212/299) = 29
+    // avg of next 4 (299,302,307,317) = 1225/4 = 306.25 → 306
+    expect(result!.avg4Cents).toBe(306);
+  });
+
+  it('avg4Cents is the mean of the next-4-cheapest (price mode self-baselines)', () => {
+    // Discount mode: candidate 100, next four 200,220,240,260 → avg 230.
+    const products = [
+      makeProduct(100),
+      makeProduct(200), makeProduct(220), makeProduct(240), makeProduct(260),
+      makeProduct(300), makeProduct(300), makeProduct(300), makeProduct(300),
+      makeProduct(300), makeProduct(300),
+    ];
+    const result = evaluateBlueprint(products, defaultSettings({ min_discount_pct: 0, min_gap_pct: 0 }));
+    expect(result!.avg4Cents).toBe(230); // (200+220+240+260)/4
+
+    // Price mode: self-baseline (no cohort to average).
+    const priceModeProducts = [makeProduct(180), makeProduct(185), makeProduct(190)];
+    const pm = evaluateBlueprint(
+      priceModeProducts,
+      defaultSettings({ detection_mode: 'price', max_price_cents: 200 }),
+    );
+    expect(pm!.avg4Cents).toBe(180);
   });
 
   it('gate is on the integer-cents comparison, not the rounded gapPct (boundary)', () => {

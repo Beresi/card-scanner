@@ -59,7 +59,20 @@ export function DealCard({
     .filter(Boolean)
     .join(' ');
 
-  const savingsCents = savings(deal.baseline_cents, deal.price_cents);
+  // Headline metric = candidate vs the NEXT-cheapest copy (the price you'd
+  // actually pay next). Legacy rows (pre-gap-gate) have no second_cheapest_cents,
+  // so fall back to the median baseline for those.
+  const hasGap = deal.second_cheapest_cents != null && deal.gap_pct != null;
+  const headlinePct = hasGap ? (deal.gap_pct as number) : deal.discount_pct;
+  const headlineBaseCents = hasGap ? (deal.second_cheapest_cents as number) : deal.baseline_cents;
+  const headlineBaseLabel = hasGap ? 'next' : 'med';
+  const savingsCents = savings(headlineBaseCents, deal.price_cents);
+
+  // Secondary "vs avg" = mean of the next-4-cheapest copies (NULL on legacy rows).
+  const avg4Pct =
+    deal.avg4_cents != null && deal.avg4_cents > 0
+      ? Math.round((1 - deal.price_cents / deal.avg4_cents) * 100)
+      : 0;
 
   return (
     <article className={rootClass}>
@@ -87,34 +100,38 @@ export function DealCard({
           </div>
         ) : (
           <div className="deal-disc">
-            <span className="deal-disc-num">−{pct(deal.discount_pct)}</span>
-            <span className="cb-eyebrow" style={{ fontSize: 10 }}>under med</span>
+            <span className="deal-disc-num">−{pct(headlinePct)}</span>
+            <span className="cb-eyebrow" style={{ fontSize: 10 }}>
+              under {headlineBaseLabel}
+            </span>
           </div>
         )}
       </div>
 
-      {/* Pricing: price, baseline, savings, bar */}
+      {/* Pricing: price, next-cheapest baseline, savings, avg line, bar */}
       <div className="deal-pricing">
         <div className="deal-price-block">
           <span className="deal-price">{usd(deal.price_cents, deal.currency)}</span>
-          <span className="deal-base">vs {usd(deal.baseline_cents, deal.currency)} med</span>
+          <span className="deal-base">
+            vs {usd(headlineBaseCents, deal.currency)} {headlineBaseLabel}
+          </span>
           <span className="deal-save cb-text-good">
             save {usd(savingsCents, deal.currency)}
           </span>
-          {deal.second_cheapest_cents != null && deal.gap_pct != null && deal.gap_pct > 0 && (
+          {deal.avg4_cents != null && avg4Pct > 0 && (
             <span
               className="deal-gap cb-mono"
-              title="How far below the next-available copy you are — the price you'd pay if you missed this one."
+              title="Candidate vs the average of the next-4-cheapest copies (2nd–5th)."
             >
-              −{pct(deal.gap_pct)} vs next {usd(deal.second_cheapest_cents, deal.currency)}
+              −{pct(avg4Pct)} vs avg {usd(deal.avg4_cents, deal.currency)}
             </span>
           )}
         </div>
         <PriceBar
-          value={deal.discount_pct}
+          value={headlinePct}
           max={100}
           tone={isHigh ? 'hot' : 'good'}
-          title={`${pct(deal.discount_pct)} below median cohort price`}
+          title={`${pct(headlinePct)} below the next-cheapest copy`}
         />
       </div>
 

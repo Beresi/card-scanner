@@ -43,6 +43,12 @@ export interface DealResult {
    * candidate is below the next-available copy. 0 in price mode.
    */
   gapPct: number;
+  /**
+   * Mean (rounded integer cents) of the next-4-cheapest qualifying copies
+   * (the 2nd–5th cheapest). A middle-ground baseline between "next copy" and the
+   * full-cohort median. In price mode this equals the candidate price.
+   */
+  avg4Cents: number;
   /** Actual cohort length used (may be < cohort_size if market is thin). */
   cohortSize: number;
   /** Math.round((1 - candidate.cents / baseline) * 100) */
@@ -191,6 +197,11 @@ function evaluateDiscountMode(
     (1 - candidate.price.cents / secondCheapestCents) * 100,
   );
 
+  // Average of the next-4-cheapest (2nd–5th). cohort is guaranteed non-empty;
+  // take up to 4 (a thin cohort that still cleared min_cohort may have fewer).
+  const next4 = cohort.slice(0, 4).map((p) => p.price.cents);
+  const avg4Cents = Math.round(next4.reduce((sum, c) => sum + c, 0) / next4.length);
+
   // ------------------------------------------------------------------
   // Discount + verdict.
   //
@@ -227,6 +238,7 @@ function evaluateDiscountMode(
     baselineCents,
     secondCheapestCents,
     gapPct,
+    avg4Cents,
     cohortSize: cohort.length,
     discountPct,
     savingsCents,
@@ -254,6 +266,7 @@ function evaluateDiscountMode(
  *  - baselineCents        = candidate.price.cents  (self-reference; no external median)
  *  - secondCheapestCents  = candidate.price.cents  (gap gate N/A in price mode)
  *  - gapPct               = 0                       (no gap relative to a next copy)
+ *  - avg4Cents            = candidate.price.cents  (no cohort to average)
  *  - discountPct          = 0                       (no discount relative to a baseline)
  *  - savingsCents         = 0                       (no savings relative to a baseline)
  *  - cohortSize           = sorted.length           (informational: total passing listings)
@@ -288,6 +301,7 @@ function evaluatePriceMode(
     baselineCents: candidate.price.cents,
     secondCheapestCents: candidate.price.cents,
     gapPct: 0,
+    avg4Cents: candidate.price.cents,
     cohortSize: sorted.length,
     discountPct: 0,
     savingsCents: 0,

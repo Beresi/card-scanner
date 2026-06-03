@@ -51,6 +51,8 @@ export interface Deal {
   second_cheapest_cents: number | null;
   // % the candidate was below second_cheapest_cents; NULL on legacy rows, 0 in price mode.
   gap_pct: number | null;
+  // Mean of the next-4-cheapest copies (the "vs avg" baseline); NULL on legacy rows.
+  avg4_cents: number | null;
   cohort_size: number;
   discount_pct: number;
 
