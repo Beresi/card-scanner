@@ -34,6 +34,7 @@ const BASE_CONFIG: ConfigRow = {
   default_min_condition: 'Near Mint',
   cohort_size: 10,
   min_cohort: 5,
+  default_min_gap_pct: 15,
   currency: 'USD',
   min_price_cents: 200,
   min_savings_cents: 100,
@@ -74,6 +75,7 @@ const INHERITING_TICKET: WatchlistRow = {
   foil_pref: null,                        // §9a nullable override (migration 0006) — NULL
   allow_graded: 0,
   min_discount_pct: null,                  // nullable override — NULL
+  min_gap_pct: null,                       // §9a nullable override (migration 0009) — NULL
   importance: null,                       // §9a nullable override (migration 0006) — NULL
   telegram_enabled: null,                 // §9a nullable override (migration 0006) — NULL
   telegram_min_discount_pct: null,        // nullable override — NULL
@@ -520,5 +522,28 @@ describe('resolveEffective — min_condition normalisation (migration 0007 defen
     // Ticket inherits (null) — so the raw value comes from config.
     const result = resolveEffective(INHERITING_TICKET, legacyConfig);
     expect(result.min_condition).toBe('Slightly Played');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §9a gap-gate inheritance (migration 0009)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — min_gap_pct §9a inheritance', () => {
+  it('NULL override inherits config.default_min_gap_pct', () => {
+    const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
+    expect(result.min_gap_pct).toBe(BASE_CONFIG.default_min_gap_pct); // 15
+  });
+
+  it('explicit override is honored over the config default', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_gap_pct: 25 };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_gap_pct).toBe(25);
+  });
+
+  it('explicit 0 is honored (uses ??, not ||) — gap gate disabled for this item', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_gap_pct: 0 };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_gap_pct).toBe(0);
   });
 });

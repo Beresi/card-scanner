@@ -27,6 +27,7 @@ import { usd } from '../../lib/format';
 // Fields with a real config default — InheritField applies here
 export type InheritableField =
   | 'min_discount_pct'
+  | 'min_gap_pct'
   | 'min_condition'
   | 'foil_pref'
   | 'importance'
@@ -53,6 +54,19 @@ export function effThreshold(item: WatchItem, config: Config): EffResult<number>
     value: item.min_discount_pct ?? config.default_discount_pct,
     inherited,
     defaultLabel: `${config.default_discount_pct}%`,
+  };
+}
+
+/**
+ * Resolve effective min_gap_pct for display (§9a, migration 0009).
+ * The gap gate requires the cheapest copy to be this % below the 2nd-cheapest.
+ */
+export function effMinGap(item: WatchItem, config: Config): EffResult<number> {
+  const inherited = item.min_gap_pct == null;
+  return {
+    value: item.min_gap_pct ?? config.default_min_gap_pct,
+    inherited,
+    defaultLabel: `${config.default_min_gap_pct}%`,
   };
 }
 

@@ -58,6 +58,7 @@ import {
   effImportance,
   effMaxPrice,
   effMinCondition,
+  effMinGap,
   effTelegramEnabled,
   effTelegramMinDiscount,
   effThreshold,
@@ -298,6 +299,7 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
   const deleteItem = useDeleteWatchItem();
 
   const thrEff      = effThreshold(item, config);
+  const gapEff      = effMinGap(item, config);
   const condEff     = effMinCondition(item, config);
   const foilEff     = effFoilPref(item, config);
   const impEff      = effImportance(item, config);
@@ -334,7 +336,7 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
   }
 
   // Helper: null a field back to inherit
-  function resetField(col: 'min_discount_pct' | 'min_condition' | 'foil_pref' | 'importance' |
+  function resetField(col: 'min_discount_pct' | 'min_gap_pct' | 'min_condition' | 'foil_pref' | 'importance' |
     'telegram_enabled' | 'telegram_min_discount_pct' | 'detection_mode' | 'max_price_cents') {
     patchItem.mutate({ id: item.id, patch: { [col]: null } as WatchItemPatch });
   }
@@ -459,7 +461,29 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
               onChange={(v) => patch({ min_discount_pct: v })}
             />
           </InheritField>
-        ) : (
+        ) : null}
+
+        {/* Gap-to-next gate — discount mode only (no cohort in price mode) */}
+        {effectiveDetect === 'discount' && (
+          <InheritField
+            label="Min gap to next"
+            inherited={gapEff.inherited}
+            defaultLabel={gapEff.defaultLabel}
+            onReset={() => resetField('min_gap_pct')}
+          >
+            <Slider
+              label="Minimum gap to next-cheapest percent"
+              value={gapEff.value}
+              min={0}
+              max={60}
+              step={5}
+              suffix="%"
+              onChange={(v) => patch({ min_gap_pct: v })}
+            />
+          </InheritField>
+        )}
+
+        {effectiveDetect === 'discount' ? null : (
           /* Price mode: max price input wrapped in InheritField */
           <InheritField
             label="Max price"

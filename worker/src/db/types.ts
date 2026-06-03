@@ -65,6 +65,7 @@ export interface WatchlistRow {
   foil_pref: FoilPref | null;      // §9a nullable override — NULL → inherit config.new_ticket_foil_pref
   allow_graded: 0 | 1;             // NOT NULL DEFAULT 0
   min_discount_pct: number | null; // nullable — NULL → inherit config.default_discount_pct
+  min_gap_pct: number | null;      // §9a nullable override (0009) — NULL → inherit config.default_min_gap_pct
   importance: Importance | null;   // §9a nullable override — NULL → inherit config.new_ticket_importance
   telegram_enabled: 0 | 1 | null; // §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled
   telegram_min_discount_pct: number | null;  // nullable — NULL → inherit config.telegram_min_discount_pct
@@ -102,6 +103,7 @@ export interface ConfigRow {
   default_min_condition: string;   // NOT NULL DEFAULT 'Near Mint'
   cohort_size: number;             // NOT NULL DEFAULT 10
   min_cohort: number;              // NOT NULL DEFAULT 5
+  default_min_gap_pct: number;     // NOT NULL DEFAULT 15 (migration 0009) — §9a gap-gate default
 
   // New-ticket form starters (pre-fill only; new tickets are born with override columns NULL)
   new_ticket_foil_pref: FoilPref;          // NOT NULL DEFAULT 'any'
@@ -212,6 +214,7 @@ export interface EffectiveSettings {
   foil_pref: FoilPref;
   allow_graded: boolean;
   min_discount_pct: number;
+  min_gap_pct: number;         // §9a — ticket.min_gap_pct ?? config.default_min_gap_pct
   cohort_size: number;         // from config only (no per-ticket override column)
   min_cohort: number;          // from config only (no per-ticket override column)
   min_price_cents: number;     // from config only — candidate must cost ≥ this
@@ -257,6 +260,8 @@ export interface DealInsert {
   price_cents: number;        // integer cents, never float
   currency: string;
   baseline_cents: number;     // integer cents, never float
+  second_cheapest_cents: number; // gap-gate baseline; price mode = candidate price
+  gap_pct: number;            // % below second_cheapest_cents; 0 in price mode
   cohort_size: number;
   discount_pct: number;       // integer percent
   priority: Importance;
@@ -291,6 +296,8 @@ export interface DealRow {
   price_cents: number;
   currency: string;
   baseline_cents: number;
+  second_cheapest_cents: number | null; // gap-gate baseline; NULL on legacy rows
+  gap_pct: number | null;                // % below 2nd-cheapest; NULL on legacy rows
   cohort_size: number;
   discount_pct: number;
   priority: Importance;
@@ -298,6 +305,9 @@ export interface DealRow {
   found_at: string;            // UTC TEXT
   seen: 0 | 1;
   dismissed: 0 | 1;
+  /** Lifecycle (migration 0009): 'open' = active; 'sold' = gone; 'expired' = no longer candidate. */
+  status: 'open' | 'sold' | 'expired';
+  retired_at: string | null;   // UTC TEXT; set when status leaves 'open'
   telegram_sent: 0 | 1;
   telegram_sent_at: string | null;
 }
@@ -341,6 +351,7 @@ export interface WatchlistInsert {
 
   // §9a nullable override columns — NULL → inherit config at scan time
   min_discount_pct?: number | null;
+  min_gap_pct?: number | null;
   telegram_min_discount_pct?: number | null;
   // §9a nullable override columns (migration 0005) — NULL → inherit config at scan time
   detection_mode?: string | null;

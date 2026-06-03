@@ -14,6 +14,7 @@ export const MOCK_CONFIG: Config = {
   default_min_condition: 'Near Mint',
   cohort_size: 10,
   min_cohort: 5,
+  default_min_gap_pct: 15,
   currency: 'USD',
   min_price_cents: 200,
   min_savings_cents: 100,

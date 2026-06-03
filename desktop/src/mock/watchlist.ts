@@ -10,7 +10,9 @@
 import type { WatchItem } from '../api/types';
 import { daysAgo, minutesAgo } from './utils';
 
-export const MOCK_WATCHLIST: WatchItem[] = [
+// Literals omit min_gap_pct (migration 0009); the .map() below fills it as null
+// (inheriting the config default) so the fixtures don't each repeat it.
+const _RAW_WATCHLIST: Array<Omit<WatchItem, 'min_gap_pct'>> = [
   // ── Blueprint items ──────────────────────────────────────────────────────
   {
     id: 1,
@@ -395,3 +397,8 @@ export const MOCK_WATCHLIST: WatchItem[] = [
     updated_at: daysAgo(2),
   },
 ];
+
+export const MOCK_WATCHLIST: WatchItem[] = _RAW_WATCHLIST.map((w): WatchItem => ({
+  ...w,
+  min_gap_pct: null,
+}));

@@ -48,11 +48,13 @@ export function DealCard({
 }: DealCardProps) {
   const isHigh = deal.priority === 'high';
   const isSeen = deal.seen === 1;
+  const isRetired = deal.status !== 'open';
 
   const rootClass = [
     'deal',
     isSeen ? 'deal-seen' : undefined,
     isHigh ? 'deal-high' : undefined,
+    isRetired ? 'deal-retired' : undefined,
   ]
     .filter(Boolean)
     .join(' ');
@@ -70,20 +72,43 @@ export function DealCard({
           <span className="deal-name">{deal.card_name}</span>
           <span className="deal-set cb-mono">{deal.expansion_name ?? '—'}</span>
         </div>
-        <div className="deal-disc">
-          <span className="deal-disc-num">−{pct(deal.discount_pct)}</span>
-          <span className="cb-eyebrow" style={{ fontSize: 10 }}>under med</span>
-        </div>
+        {isRetired ? (
+          <div className="deal-disc">
+            <span
+              className={`deal-status-badge deal-status-${deal.status}`}
+              title={
+                deal.status === 'sold'
+                  ? 'This listing is no longer on the marketplace (likely bought).'
+                  : 'No longer the cheapest qualifying copy — superseded since it was found.'
+              }
+            >
+              {deal.status === 'sold' ? 'SOLD' : 'EXPIRED'}
+            </span>
+          </div>
+        ) : (
+          <div className="deal-disc">
+            <span className="deal-disc-num">−{pct(deal.discount_pct)}</span>
+            <span className="cb-eyebrow" style={{ fontSize: 10 }}>under med</span>
+          </div>
+        )}
       </div>
 
       {/* Pricing: price, baseline, savings, bar */}
       <div className="deal-pricing">
         <div className="deal-price-block">
           <span className="deal-price">{usd(deal.price_cents, deal.currency)}</span>
-          <span className="deal-base">vs {usd(deal.baseline_cents, deal.currency)}</span>
+          <span className="deal-base">vs {usd(deal.baseline_cents, deal.currency)} med</span>
           <span className="deal-save cb-text-good">
             save {usd(savingsCents, deal.currency)}
           </span>
+          {deal.second_cheapest_cents != null && deal.gap_pct != null && deal.gap_pct > 0 && (
+            <span
+              className="deal-gap cb-mono"
+              title="How far below the next-available copy you are — the price you'd pay if you missed this one."
+            >
+              −{pct(deal.gap_pct)} vs next {usd(deal.second_cheapest_cents, deal.currency)}
+            </span>
+          )}
         </div>
         <PriceBar
           value={deal.discount_pct}

@@ -45,6 +45,7 @@ import {
   getConfig,
   patchConfig,
   upsertDeal,
+  revalidateBlueprintDeals,
   markTelegramSent,
   countBlueprintsForExpansion,
   syncBlueprints,
@@ -830,36 +831,47 @@ async function evaluateAndUpsert(
   callbacks: ScanCallbacks,
 ): Promise<void> {
   const result = evaluateBlueprint(products, eff);
-  if (result === null) { return; }
 
-  const candidate = result.product;
+  if (result !== null) {
+    const candidate = result.product;
 
-  const deal: DealInsert = {
-    watchlist_id: item.id,
-    blueprint_id: blueprintId,
-    product_id: candidate.id,
-    card_name: candidate.name_en,
-    expansion_name: candidate.expansion?.name_en ?? null,
-    seller_username: candidate.user?.username ?? null,
-    seller_country: candidate.user?.country_code ?? null,
-    condition: candidate.properties_hash.condition,
-    language: candidate.properties_hash.mtg_language,
-    foil: candidate.properties_hash.mtg_foil,
-    can_sell_via_hub: candidate.user?.can_sell_via_hub ?? null,
-    quantity: candidate.quantity,
-    price_cents: candidate.price.cents,      // integer cents, never float
-    currency: candidate.price.currency,
-    baseline_cents: result.baselineCents,    // integer cents, never float
-    cohort_size: result.cohortSize,
-    discount_pct: result.discountPct,        // integer percent
-    priority: eff.importance,
-    buy_url: buildBuyUrl(blueprintId, candidate.name_en, candidate.expansion?.name_en ?? null),
-  };
+    const deal: DealInsert = {
+      watchlist_id: item.id,
+      blueprint_id: blueprintId,
+      product_id: candidate.id,
+      card_name: candidate.name_en,
+      expansion_name: candidate.expansion?.name_en ?? null,
+      seller_username: candidate.user?.username ?? null,
+      seller_country: candidate.user?.country_code ?? null,
+      condition: candidate.properties_hash.condition,
+      language: candidate.properties_hash.mtg_language,
+      foil: candidate.properties_hash.mtg_foil,
+      can_sell_via_hub: candidate.user?.can_sell_via_hub ?? null,
+      quantity: candidate.quantity,
+      price_cents: candidate.price.cents,                  // integer cents, never float
+      currency: candidate.price.currency,
+      baseline_cents: result.baselineCents,                // integer cents, never float
+      second_cheapest_cents: result.secondCheapestCents,   // gap-gate baseline
+      gap_pct: result.gapPct,                              // % below next-available copy
+      cohort_size: result.cohortSize,
+      discount_pct: result.discountPct,                    // integer percent
+      priority: eff.importance,
+      buy_url: buildBuyUrl(blueprintId, candidate.name_en, candidate.expansion?.name_en ?? null),
+    };
 
-  const isNew = await upsertDeal(db, deal);
-  if (isNew) {
-    callbacks.onNewDeal(deal, eff);
+    const isNew = await upsertDeal(db, deal);
+    if (isNew) {
+      callbacks.onNewDeal(deal, eff);
+    }
   }
+
+  // Deal lifecycle (migration 0009): retire open deals for this blueprint that
+  // are no longer the active candidate — sold (listing gone) or expired
+  // (superseded / failed a gate). Runs even when no deal qualifies now, so a
+  // blueprint that stopped having a deal still gets its stale rows cleared.
+  const presentProductIds = products.map((p) => p.id);
+  const candidateProductId = result?.product.id ?? null;
+  await revalidateBlueprintDeals(db, blueprintId, presentProductIds, candidateProductId);
 }
 
 // ---------------------------------------------------------------------------

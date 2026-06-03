@@ -67,10 +67,11 @@ function defaultSettings(
     min_discount_pct: 50,
     cohort_size: 10,
     min_cohort: 5,
-    // Floors set to 0 so existing §16 tests (which use penny-scale prices) remain valid.
-    // Tests that exercise the floors override these explicitly.
+    // Floors + gap gate set to 0 so existing §16 tests (penny-scale prices) remain valid.
+    // Tests that exercise the floors / gap gate override these explicitly.
     min_price_cents: 0,
     min_savings_cents: 0,
+    min_gap_pct: 0,
     importance: 'normal',
     telegram_enabled: false,
     telegram_min_discount_pct: 60,
@@ -620,5 +621,87 @@ describe("price mode — detection_mode: 'price'", () => {
     );
 
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap-to-next-cheapest gate (migration 0009)
+//
+// Real-world reports: the median baseline sits well above the cheapest copy on
+// any upward-sloping ladder, so the cheapest copy looked like a 30% deal even
+// when the next copy was pennies more. The gap gate requires the candidate to be
+// at least min_gap_pct% below the 2nd-cheapest qualifying copy.
+// ---------------------------------------------------------------------------
+
+describe('gap-to-next gate — suppresses tightly-packed ladders', () => {
+  // Mana Sculpt (live): 1.83 cheapest, next 1.99 → only 8% gap. Median ~2.67
+  // makes it LOOK like 31%, but you'd actually pay 1.99 if you missed it.
+  const manaSculpt = [
+    makeProduct(183),
+    makeProduct(199), makeProduct(223), makeProduct(249), makeProduct(261),
+    makeProduct(262), makeProduct(267), makeProduct(267), makeProduct(269),
+    makeProduct(270), makeProduct(270),
+  ];
+
+  it('rejects Mana Sculpt at min_gap_pct 15 (8% gap to next copy)', () => {
+    // min_discount_pct 0 isolates the gap gate (median gate always passes).
+    const result = evaluateBlueprint(
+      manaSculpt,
+      defaultSettings({ min_discount_pct: 0, min_gap_pct: 15 }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it('fires Mana Sculpt only when the gap gate is disabled (min_gap_pct 0)', () => {
+    const result = evaluateBlueprint(
+      manaSculpt,
+      defaultSettings({ min_discount_pct: 0, min_gap_pct: 0 }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.secondCheapestCents).toBe(199);
+    expect(result!.gapPct).toBe(8); // round(1 - 183/199) = 8
+  });
+
+  it('keeps a genuine deal (Ravenous: 2.12 vs next 2.99 = 29% gap) at min_gap_pct 15', () => {
+    const ravenous = [
+      makeProduct(212),
+      makeProduct(299), makeProduct(302), makeProduct(307), makeProduct(317),
+      makeProduct(327), makeProduct(327), makeProduct(347), makeProduct(360),
+      makeProduct(370), makeProduct(380),
+    ];
+    const result = evaluateBlueprint(
+      ravenous,
+      defaultSettings({ min_discount_pct: 0, min_gap_pct: 15 }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.secondCheapestCents).toBe(299);
+    expect(result!.gapPct).toBe(29); // round(1 - 212/299) = 29
+  });
+
+  it('gate is on the integer-cents comparison, not the rounded gapPct (boundary)', () => {
+    // second-cheapest 100¢, min_gap_pct 20 → candidate must be ≤ 80¢.
+    // 80¢ passes (exactly 20% below); 81¢ fails.
+    const pass = evaluateBlueprint(
+      [makeProduct(80), ...Array.from({ length: 10 }, () => makeProduct(100))],
+      defaultSettings({ min_discount_pct: 0, min_gap_pct: 20 }),
+    );
+    expect(pass).not.toBeNull();
+
+    const fail = evaluateBlueprint(
+      [makeProduct(81), ...Array.from({ length: 10 }, () => makeProduct(100))],
+      defaultSettings({ min_discount_pct: 0, min_gap_pct: 20 }),
+    );
+    expect(fail).toBeNull();
+  });
+
+  it('price mode ignores the gap gate (self-baseline: gapPct 0, second = candidate)', () => {
+    const products = [makeProduct(180), makeProduct(185), makeProduct(190)];
+    const result = evaluateBlueprint(
+      products,
+      defaultSettings({ detection_mode: 'price', max_price_cents: 200, min_gap_pct: 90 }),
+    );
+    expect(result).not.toBeNull();
+    expect(result!.gapPct).toBe(0);
+    expect(result!.secondCheapestCents).toBe(180);
   });
 });

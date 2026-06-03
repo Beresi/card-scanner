@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS watchlist (
   foil_pref                   TEXT    CHECK (foil_pref IN ('any','foil','nonfoil')),
   allow_graded                INTEGER NOT NULL DEFAULT 0,
   min_discount_pct            INTEGER,                   -- NULL → use config.default_discount_pct (≥ this % below median)
+  -- §9a nullable override (migration 0009) — NULL → inherit config.default_min_gap_pct
+  min_gap_pct                 INTEGER,                   -- ≥ this % below the 2nd-cheapest qualifying copy
   -- §9a nullable override — NULL → inherit config.new_ticket_importance at scan time
   importance                  TEXT    CHECK (importance IN ('high','normal')),
   -- §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled at scan time
@@ -77,6 +79,11 @@ CREATE TABLE IF NOT EXISTS deals (
   price_cents       INTEGER NOT NULL,                 -- integer cents, never float
   currency          TEXT    NOT NULL,
   baseline_cents    INTEGER NOT NULL,                 -- integer cents, never float
+  -- 2nd-cheapest qualifying copy at scan time (gap-gate baseline, migration 0009).
+  -- NULL on legacy rows; in price mode = candidate price (self-baseline).
+  second_cheapest_cents INTEGER,
+  -- % the candidate was below second_cheapest_cents (informational; 0 in price mode).
+  gap_pct           INTEGER,
   cohort_size       INTEGER NOT NULL,
   discount_pct      INTEGER NOT NULL,
   priority          TEXT    NOT NULL DEFAULT 'normal', -- 'high' | 'normal'
@@ -84,12 +91,18 @@ CREATE TABLE IF NOT EXISTS deals (
   found_at          TEXT    NOT NULL DEFAULT (datetime('now')),
   seen              INTEGER NOT NULL DEFAULT 0,        -- boolean: 0/1
   dismissed         INTEGER NOT NULL DEFAULT 0,        -- boolean: 0/1
+  -- Lifecycle (migration 0009): 'open' = active; 'sold' = listing gone;
+  -- 'expired' = still listed but no longer the qualifying candidate.
+  status            TEXT    NOT NULL DEFAULT 'open',
+  retired_at        TEXT,                              -- UTC TEXT; set when status leaves 'open'
   telegram_sent     INTEGER NOT NULL DEFAULT 0,        -- boolean: 0/1
   telegram_sent_at  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_deals_found_at ON deals(found_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deals_open     ON deals(dismissed, found_at DESC);
+-- Open-feed index keyed on status (listDeals 'open' = status='open' AND dismissed=0).
+CREATE INDEX IF NOT EXISTS idx_deals_status_open ON deals(status, dismissed, found_at DESC);
 
 -- Global config — EXACTLY ONE ROW, id = 1 (enforced by CHECK + the seed below).
 -- Holds: (a) deal-logic defaults inherited by NULL-override tickets (§9a),
@@ -104,6 +117,11 @@ CREATE TABLE IF NOT EXISTS config (
   default_min_condition         TEXT    NOT NULL DEFAULT 'Near Mint',
   cohort_size                   INTEGER NOT NULL DEFAULT 10,
   min_cohort                    INTEGER NOT NULL DEFAULT 5,
+  -- §9a inheritable gap gate (migration 0009): min % the cheapest copy must be
+  -- below the 2nd-cheapest qualifying copy (the price you'd actually pay next).
+  -- Suppresses tightly-packed ladders where the median makes a penny-cheaper
+  -- copy look like a 30% deal.
+  default_min_gap_pct           INTEGER NOT NULL DEFAULT 15,
 
   -- Starting values for the new-ticket form (these pre-fill the UI; tickets are born
   -- with override columns NULL, referencing these defaults, not copying them in)

@@ -27,6 +27,7 @@ const CONFIG_PATCH_FIELDS = [
   'default_min_condition',
   'cohort_size',
   'min_cohort',
+  'default_min_gap_pct',
   'currency',
   'min_price_cents',
   'min_savings_cents',
@@ -103,6 +104,14 @@ configRouter.patch('/', async (c) => {
     // default_min_condition: must be one of the 7 canonical CardTrader grade names.
     if (body['default_min_condition'] !== undefined) {
       if (!(CONDITIONS as readonly string[]).includes(body['default_min_condition'] as string)) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // default_min_gap_pct: integer 0–100 (% the cheapest must be below the 2nd-cheapest).
+    if (body['default_min_gap_pct'] !== undefined) {
+      const gap = body['default_min_gap_pct'];
+      if (typeof gap !== 'number' || !Number.isInteger(gap) || gap < 0 || gap > 100) {
         return c.json({ error: 'invalid_request' }, 400);
       }
     }

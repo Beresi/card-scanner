@@ -399,6 +399,21 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   />
                 </Row>
 
+                <Row
+                  label="Min gap to next"
+                  hint="Also require the cheapest copy to be this % below the 2nd-cheapest copy — the price you'd actually pay next. Kills tightly-packed ladders where a penny-cheaper copy looks like a big discount. 0 = off."
+                >
+                  <Slider
+                    value={c.default_min_gap_pct}
+                    min={0}
+                    max={60}
+                    step={1}
+                    suffix="%"
+                    label="Minimum gap to next-cheapest percent"
+                    onChange={(v) => cfg.mutate({ default_min_gap_pct: v })}
+                  />
+                </Row>
+
                 <Row label="Default min condition">
                   <Select
                     value={c.default_min_condition}

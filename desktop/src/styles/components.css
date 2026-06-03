@@ -524,6 +524,34 @@
   margin-left: auto;
 }
 
+/* Gap-to-next line — full-width row below the price block.
+   "−Y% vs next $Z" = how far below the next-available copy you are. */
+.deal-gap {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Retired (sold/expired) deal — dimmed + desaturated so it reads as inactive. */
+.deal-retired {
+  opacity: 0.55;
+  filter: saturate(0.5);
+}
+
+/* SOLD / EXPIRED badge shown in place of the discount number. */
+.deal-status-badge {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: var(--radius, 3px);
+  border: 1px solid currentColor;
+}
+.deal-status-sold    { color: var(--hot); }
+.deal-status-expired { color: var(--text-dim); }
+
 /* ---- Meta tags row ---- */
 .deal-meta {
   display: flex;

@@ -43,6 +43,7 @@ const CONFIG_FALLBACK: Config = {
   default_min_condition: 'Near Mint',
   cohort_size: 4,
   min_cohort: 2,
+  default_min_gap_pct: 15,
   currency: 'USD',
   min_price_cents: 200,
   min_savings_cents: 100,

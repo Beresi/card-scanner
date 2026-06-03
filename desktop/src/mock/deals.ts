@@ -8,7 +8,10 @@
 import type { Deal } from '../api/types';
 import { minutesAgo, hoursAgo } from './utils';
 
-export const MOCK_DEALS: Deal[] = [
+// Literals carry the load-bearing Deal fields; the gap-gate + lifecycle columns
+// (migration 0009) are filled with defaults by the .map() below so the ~24
+// fixtures don't each have to repeat them.
+const _RAW_DEALS: Array<Omit<Deal, 'second_cheapest_cents' | 'gap_pct' | 'status' | 'retired_at'>> = [
   // ── High-priority, very recent (within last 10 min) ─────────────────────
   {
     id: 1000,
@@ -653,3 +656,12 @@ export const MOCK_DEALS: Deal[] = [
     telegram_sent_at: null,
   },
 ];
+
+// All mock deals are 'open' with no recorded gap baseline (legacy-style nulls).
+export const MOCK_DEALS: Deal[] = _RAW_DEALS.map((d): Deal => ({
+  ...d,
+  second_cheapest_cents: null,
+  gap_pct: null,
+  status: 'open',
+  retired_at: null,
+}));

@@ -116,7 +116,7 @@ export function DealFeed() {
               variant={status === 'all' ? 'primary' : 'ghost'}
               onClick={() => setStatus('all')}
               aria-pressed={status === 'all'}
-              title="Show all deals including seen/dismissed"
+              title="Show all deals including seen/dismissed and retired (sold/expired)"
             >
               All
             </Btn>

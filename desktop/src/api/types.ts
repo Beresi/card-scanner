@@ -47,6 +47,10 @@ export interface Deal {
   price_cents: number;
   currency: string;
   baseline_cents: number;
+  // 2nd-cheapest qualifying copy at scan time (gap-gate baseline); NULL on legacy rows.
+  second_cheapest_cents: number | null;
+  // % the candidate was below second_cheapest_cents; NULL on legacy rows, 0 in price mode.
+  gap_pct: number | null;
   cohort_size: number;
   discount_pct: number;
 
@@ -58,6 +62,10 @@ export interface Deal {
 
   seen: DbBool;
   dismissed: DbBool;
+  // Lifecycle (migration 0009): 'open' = active; 'sold' = listing gone;
+  // 'expired' = still listed but no longer the qualifying candidate.
+  status: 'open' | 'sold' | 'expired';
+  retired_at: string | null;
   telegram_sent: DbBool;
   telegram_sent_at: string | null;
 }
@@ -71,6 +79,9 @@ export interface Config {
   default_min_condition: string;
   cohort_size: number;
   min_cohort: number;
+  // §9a inheritable gap gate (migration 0009): min % the cheapest copy must be
+  // below the 2nd-cheapest qualifying copy.
+  default_min_gap_pct: number;
   currency: string;
   min_price_cents: number;
   min_savings_cents: number;
@@ -128,6 +139,8 @@ export interface WatchItem {
   foil_pref: FoilPref | null;
   allow_graded: DbBool | null;
   min_discount_pct: number | null;
+  // §9a override (NULL = inherit config.default_min_gap_pct)
+  min_gap_pct: number | null;
   importance: Importance | null;
   telegram_enabled: DbBool | null;
   telegram_min_discount_pct: number | null;
@@ -206,6 +219,7 @@ type WatchItemOverrides = Partial<Pick<
   | 'foil_pref'
   | 'allow_graded'
   | 'min_discount_pct'
+  | 'min_gap_pct'
   | 'importance'
   | 'telegram_enabled'
   | 'telegram_min_discount_pct'
@@ -247,6 +261,7 @@ export type WatchItemPatch = Partial<Pick<
   | 'foil_pref'
   | 'allow_graded'
   | 'min_discount_pct'
+  | 'min_gap_pct'
   | 'importance'
   | 'telegram_enabled'
   | 'telegram_min_discount_pct'
@@ -264,6 +279,7 @@ export type WatchItemPatch = Partial<Pick<
 // ---------------------------------------------------------------------------
 export type ResettableField =
   | 'min_discount_pct'
+  | 'min_gap_pct'
   | 'telegram_min_discount_pct'
   | 'detection_mode'
   | 'max_price_cents';

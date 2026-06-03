@@ -161,6 +161,7 @@ export async function listActiveWatchlist(
               foil_pref,
               allow_graded,
               min_discount_pct,
+              min_gap_pct,
               importance,
               telegram_enabled,
               telegram_min_discount_pct,
@@ -246,6 +247,8 @@ export async function upsertDeal(
          price_cents,
          currency,
          baseline_cents,
+         second_cheapest_cents,
+         gap_pct,
          cohort_size,
          discount_pct,
          priority,
@@ -255,7 +258,8 @@ export async function upsertDeal(
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
-         ?, ?, ?, ?,
+         ?, ?, ?, ?, ?,
+         ?,
          datetime('now')
        )
        ON CONFLICT(product_id) DO NOTHING`,
@@ -277,6 +281,8 @@ export async function upsertDeal(
       deal.price_cents,
       deal.currency,
       deal.baseline_cents,
+      deal.second_cheapest_cents,
+      deal.gap_pct,
       deal.cohort_size,
       deal.discount_pct,
       deal.priority,
@@ -288,6 +294,83 @@ export async function upsertDeal(
   // fired (existing product_id).  This is the sole dedupe signal — do NOT
   // re-query and diff, as the skill and PRD §7/§13 both require.
   return (res.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Re-validate the open deals for one freshly-scanned blueprint and retire any
+ * that are no longer the active candidate (deal lifecycle, migration 0009).
+ *
+ * Inputs for a blueprint we just fetched listings for:
+ *  - presentProductIds  = every product_id currently listed (the cheapest-25).
+ *  - candidateProductId = the product_id of the deal the engine flagged this run,
+ *                         or null when no deal qualifies now.
+ *
+ * Transitions (only touch status='open', dismissed=0 rows — never user-dismissed):
+ *  - product_id NOT present                → 'sold'    (listing gone).
+ *  - present but product_id != candidate   → 'expired' (superseded / failed a gate,
+ *                                             e.g. the new gap gate).
+ *  - product_id == candidate               → stays 'open'.
+ *  - candidate previously 'expired'        → reopened (it qualifies again).
+ *
+ * 'sold' rows are never reopened (a gone listing is gone); 'dismissed' is a user
+ * action and is left alone. retired_at is stamped when a row leaves 'open'.
+ * Runs as one ordered D1 batch (transactional): sold → reopen → expire.
+ */
+export async function revalidateBlueprintDeals(
+  db: D1Database,
+  blueprintId: number,
+  presentProductIds: number[],
+  candidateProductId: number | null,
+): Promise<void> {
+  const stmts: D1PreparedStatement[] = [];
+
+  // 1. SOLD — open deals whose listing is gone from the marketplace.
+  if (presentProductIds.length === 0) {
+    stmts.push(
+      db.prepare(
+        `UPDATE deals SET status='sold', retired_at=datetime('now')
+          WHERE blueprint_id=? AND status='open' AND dismissed=0`,
+      ).bind(blueprintId),
+    );
+  } else {
+    const placeholders = presentProductIds.map(() => '?').join(', ');
+    stmts.push(
+      db.prepare(
+        `UPDATE deals SET status='sold', retired_at=datetime('now')
+          WHERE blueprint_id=? AND status='open' AND dismissed=0
+            AND product_id NOT IN (${placeholders})`,
+      ).bind(blueprintId, ...presentProductIds),
+    );
+  }
+
+  if (candidateProductId !== null) {
+    // 2. REOPEN — the current candidate had been retired as 'expired' but now
+    //    qualifies again (its earlier-cheaper competitor sold).
+    stmts.push(
+      db.prepare(
+        `UPDATE deals SET status='open', retired_at=NULL
+          WHERE blueprint_id=? AND product_id=? AND status='expired'`,
+      ).bind(blueprintId, candidateProductId),
+    );
+    // 3. EXPIRED — still-present open deals that are not the current candidate.
+    stmts.push(
+      db.prepare(
+        `UPDATE deals SET status='expired', retired_at=datetime('now')
+          WHERE blueprint_id=? AND status='open' AND dismissed=0
+            AND product_id != ?`,
+      ).bind(blueprintId, candidateProductId),
+    );
+  } else {
+    // No qualifying candidate now → expire every remaining present open deal.
+    stmts.push(
+      db.prepare(
+        `UPDATE deals SET status='expired', retired_at=datetime('now')
+          WHERE blueprint_id=? AND status='open' AND dismissed=0`,
+      ).bind(blueprintId),
+    );
+  }
+
+  await db.batch(stmts);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +414,7 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   'default_min_condition',
   'cohort_size',
   'min_cohort',
+  'default_min_gap_pct',
   'currency',
   'min_price_cents',
   'min_savings_cents',
@@ -412,6 +496,7 @@ const WATCHLIST_PATCHABLE_COLS = new Set<string>([
   'foil_pref',
   'allow_graded',
   'min_discount_pct',
+  'min_gap_pct',
   'importance',
   'telegram_enabled',
   'telegram_min_discount_pct',
@@ -438,6 +523,7 @@ const WATCHLIST_PATCHABLE_COLS = new Set<string>([
  */
 const WATCHLIST_RESETTABLE_COLS = new Set<string>([
   'min_discount_pct',
+  'min_gap_pct',
   'telegram_min_discount_pct',
   // §9a nullable overrides with config fallback (migration 0005)
   'detection_mode',
@@ -479,7 +565,7 @@ export async function getWatchlistById(
   return db
     .prepare(
       `SELECT id, type, cardtrader_id, label, game_id, min_condition,
-              foil_pref, allow_graded, min_discount_pct, importance,
+              foil_pref, allow_graded, min_discount_pct, min_gap_pct, importance,
               telegram_enabled, telegram_min_discount_pct,
               telegram_max_price_cents, telegram_min_savings_cents,
               active, created_at, updated_at,
@@ -503,7 +589,7 @@ export async function listWatchlist(db: D1Database): Promise<WatchlistRow[]> {
   const { results } = await db
     .prepare(
       `SELECT id, type, cardtrader_id, label, game_id, min_condition,
-              foil_pref, allow_graded, min_discount_pct, importance,
+              foil_pref, allow_graded, min_discount_pct, min_gap_pct, importance,
               telegram_enabled, telegram_min_discount_pct,
               telegram_max_price_cents, telegram_min_savings_cents,
               active, created_at, updated_at,
@@ -556,6 +642,7 @@ export async function insertWatchlist(
   // §9a nullable overrides — only bind when callers explicitly supply them
   // (routes should leave these absent so new items are born inheriting)
   if (row.min_discount_pct !== undefined)              { colVals.push(['min_discount_pct', row.min_discount_pct]); }
+  if (row.min_gap_pct !== undefined)                   { colVals.push(['min_gap_pct', row.min_gap_pct]); }
   if (row.telegram_min_discount_pct !== undefined)  { colVals.push(['telegram_min_discount_pct', row.telegram_min_discount_pct]); }
   if (row.telegram_max_price_cents !== undefined)   { colVals.push(['telegram_max_price_cents', row.telegram_max_price_cents]); }
   if (row.telegram_min_savings_cents !== undefined) { colVals.push(['telegram_min_savings_cents', row.telegram_min_savings_cents]); }
@@ -714,9 +801,10 @@ export async function listDeals(
   let sql = `SELECT * FROM deals WHERE 1=1`;
   const binds: unknown[] = [];
 
-  // Default to 'open' — omit dismissed rows unless caller explicitly asks for all.
+  // Default to 'open' — omit dismissed AND retired (sold/expired) rows unless the
+  // caller explicitly asks for all. status='open' is the lifecycle gate (0009).
   if ((f.status ?? 'open') === 'open') {
-    sql += ` AND dismissed = 0`;
+    sql += ` AND dismissed = 0 AND status = 'open'`;
   }
   if (f.min_discount !== undefined) {
     sql += ` AND discount_pct >= ?`;

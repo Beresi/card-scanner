@@ -23,6 +23,7 @@ function watchItem(over: Partial<WatchItem>): WatchItem {
     foil_pref: null,
     allow_graded: null,
     min_discount_pct: null,
+    min_gap_pct: null,
     importance: null,
     telegram_enabled: null,
     telegram_min_discount_pct: null,

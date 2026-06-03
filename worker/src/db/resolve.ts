@@ -58,6 +58,10 @@ export function resolveEffective(
     // Uses `??` so that an explicit 0 is honored (0 = "any copy at or below the median qualifies").
     min_discount_pct: ticket.min_discount_pct ?? config.default_discount_pct,
 
+    // min_gap_pct: §9a nullable override — NULL → inherit config.default_min_gap_pct.
+    // Uses `??` so an explicit 0 is honored (0 = "any copy below the 2nd-cheapest qualifies").
+    min_gap_pct: ticket.min_gap_pct ?? config.default_min_gap_pct,
+
     // cohort_size / min_cohort / min_price_cents / min_savings_cents:
     // config-only, no per-ticket override column.
     cohort_size: config.cohort_size,

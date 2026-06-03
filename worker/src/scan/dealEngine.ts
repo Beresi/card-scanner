@@ -32,6 +32,17 @@ export interface DealResult {
   product: Product;
   /** Median of the cohort, integer cents — never a float. */
   baselineCents: number;
+  /**
+   * Price of the 2nd-cheapest qualifying copy, integer cents — the price you'd
+   * actually pay if you missed the candidate. This is the gap-gate baseline.
+   * In price mode there is no cohort, so this equals the candidate price.
+   */
+  secondCheapestCents: number;
+  /**
+   * Math.round((1 - candidate.cents / secondCheapestCents) * 100) — how far the
+   * candidate is below the next-available copy. 0 in price mode.
+   */
+  gapPct: number;
   /** Actual cohort length used (may be < cohort_size if market is thin). */
   cohortSize: number;
   /** Math.round((1 - candidate.cents / baseline) * 100) */
@@ -170,17 +181,32 @@ function evaluateDiscountMode(
   const baselineCents = median(cohort.map((p) => p.price.cents));
 
   // ------------------------------------------------------------------
+  // Gap-to-next baseline — the 2nd-cheapest qualifying copy (cohort[0] ===
+  // sorted[1]). This is the price you'd actually pay if you missed the
+  // candidate. cohort is guaranteed non-empty here (median() above would have
+  // thrown otherwise), so cohort[0] always exists.
+  // ------------------------------------------------------------------
+  const secondCheapestCents = cohort[0].price.cents;
+  const gapPct = Math.round(
+    (1 - candidate.price.cents / secondCheapestCents) * 100,
+  );
+
+  // ------------------------------------------------------------------
   // Discount + verdict.
   //
-  //    All three conditions must hold (integer-cents comparisons only —
-  //    NEVER branch on the rounded discountPct):
+  //    All FOUR conditions must hold (integer-cents comparisons only —
+  //    NEVER branch on the rounded discountPct/gapPct):
   //      a) % gate:          candidate.price.cents <= (1 - min_discount_pct/100) * baseline
   //                          i.e. candidate is at least min_discount_pct% BELOW the median.
   //                          min_discount_pct=0 means "any copy at or below the median qualifies".
-  //      b) price floor:     candidate.price.cents >= min_price_cents
-  //      c) savings floor:   savingsCents          >= min_savings_cents
+  //      b) gap gate:        candidate.price.cents <= (1 - min_gap_pct/100) * secondCheapest
+  //                          i.e. candidate is at least min_gap_pct% below the NEXT-available
+  //                          copy. Kills tightly-packed ladders where the median makes a
+  //                          penny-cheaper copy look like a big discount. min_gap_pct=0 disables.
+  //      c) price floor:     candidate.price.cents >= min_price_cents
+  //      d) savings floor:   savingsCents          >= min_savings_cents
   //
-  //    Floors (b) and (c) suppress bulk/penny-card false positives where
+  //    Floors (c) and (d) suppress bulk/penny-card false positives where
   //    the absolute saving is trivially small even if the % looks large.
   // ------------------------------------------------------------------
   const savingsCents = baselineCents - candidate.price.cents;
@@ -190,6 +216,7 @@ function evaluateDiscountMode(
 
   const isDeal =
     candidate.price.cents <= (1 - settings.min_discount_pct / 100) * baselineCents &&
+    candidate.price.cents <= (1 - settings.min_gap_pct / 100) * secondCheapestCents &&
     candidate.price.cents >= settings.min_price_cents &&
     savingsCents >= settings.min_savings_cents;
 
@@ -198,6 +225,8 @@ function evaluateDiscountMode(
   return {
     product: candidate,
     baselineCents,
+    secondCheapestCents,
+    gapPct,
     cohortSize: cohort.length,
     discountPct,
     savingsCents,
@@ -221,11 +250,13 @@ function evaluateDiscountMode(
  *  - If settings.max_price_cents is null, there is no ceiling to test against
  *    and the item has no actionable price mode configured — return null.
  *
- * Self-baseline encoding for the deals row (all three columns are NOT NULL):
- *  - baselineCents = candidate.price.cents  (self-reference; no external median)
- *  - discountPct   = 0                      (no discount relative to a baseline)
- *  - savingsCents  = 0                      (no savings relative to a baseline)
- *  - cohortSize    = sorted.length          (informational: total passing listings)
+ * Self-baseline encoding for the deals row:
+ *  - baselineCents        = candidate.price.cents  (self-reference; no external median)
+ *  - secondCheapestCents  = candidate.price.cents  (gap gate N/A in price mode)
+ *  - gapPct               = 0                       (no gap relative to a next copy)
+ *  - discountPct          = 0                       (no discount relative to a baseline)
+ *  - savingsCents         = 0                       (no savings relative to a baseline)
+ *  - cohortSize           = sorted.length           (informational: total passing listings)
  *
  * The Telegram discount gate will not fire for price-mode deals (discountPct=0);
  * the importance bypass or a per-item telegram_max_price_cents cap are the
@@ -249,10 +280,14 @@ function evaluatePriceMode(
   if (!isDeal) {return null;}
 
   // Self-baseline: baseline = candidate price, discount = 0, savings = 0.
+  // The gap gate does not apply in price mode (the ceiling IS the intent), so
+  // secondCheapest self-references the candidate and gapPct = 0.
   // cohortSize = total passing listings (informational; includes candidate).
   return {
     product: candidate,
     baselineCents: candidate.price.cents,
+    secondCheapestCents: candidate.price.cents,
+    gapPct: 0,
     cohortSize: sorted.length,
     discountPct: 0,
     savingsCents: 0,
