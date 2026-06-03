@@ -279,7 +279,7 @@ function _addItem(
     min_condition: null,
     foil_pref: null,
     allow_graded: null,
-    threshold_pct: null,
+    min_discount_pct: null,
     importance: null,
     telegram_enabled: null,
     telegram_min_discount_pct: null,

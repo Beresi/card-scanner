@@ -87,6 +87,8 @@ export function Telemetry({
   // Chunked progress values — guard scan_total===0 to avoid divide-by-zero in PriceBar.
   const scanDone  = health?.scan_done  ?? 0;
   const scanTotal = health?.scan_total ?? 0;
+  // active_watch_count: optional field added to health — undefined means unknown.
+  const activeWatchCount = health?.active_watch_count;
 
   // Derive all telemetry stats via the pure selectors (reusable, no mock data).
   const stats = useMemo(
@@ -136,7 +138,9 @@ export function Telemetry({
           <div className="tele-scan-info">
             <span className="cb-eyebrow">scanning this cycle</span>
             <span className="cb-mono tele-clock">
-              {scanTotal === 0
+              {activeWatchCount === 0
+                ? 'idle · nothing watched'
+                : scanTotal === 0
                 ? 'caching sets…'
                 : `${scanDone} / ${scanTotal} cards`}
             </span>

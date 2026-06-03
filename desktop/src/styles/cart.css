@@ -1,0 +1,263 @@
+/* ============================================================
+   CARD // BROKER — Cart view styles
+   Dense grid rows matching the CardTrader cart layout:
+     [thumb] [name + chips] [price] [qty stepper] [remove]
+
+   All colors use var(--…) tokens — no literal hex.
+   Reduced-motion safe: no required animation.
+   ============================================================ */
+
+/* ---------------------------------------------------------------------------
+   Cart view wrapper
+--------------------------------------------------------------------------- */
+
+.cart-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row, 14px);
+}
+
+/* ---------------------------------------------------------------------------
+   Seller sub-carts list
+--------------------------------------------------------------------------- */
+
+.cart-subcarts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row, 14px);
+}
+
+/* ---------------------------------------------------------------------------
+   Lines list inside each subcart
+--------------------------------------------------------------------------- */
+
+.cart-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;                /* hairline gap between rows */
+  padding: 0 var(--pad, 16px);
+}
+
+/* ---------------------------------------------------------------------------
+   Single cart line — grid columns:
+     [thumb ~52px] [name+chips auto] [unit price 7rem] [qty stepper 9rem] [remove 5rem]
+--------------------------------------------------------------------------- */
+
+.cart-line {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 6rem 8.5rem 2.75rem;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cart-line:last-child {
+  border-bottom: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Thumbnail column
+--------------------------------------------------------------------------- */
+
+.cart-line-thumb {
+  width: 52px;
+  height: 70px;           /* ~standard card aspect 2.5:3.5 ≈ 0.714 */
+  flex: none;
+  border-radius: calc(var(--radius, 4px) * 0.75);
+  overflow: hidden;
+  background: var(--panel-3);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.cart-line-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ---------------------------------------------------------------------------
+   Identity column (name + chips)
+--------------------------------------------------------------------------- */
+
+.cart-line-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;           /* allow text-overflow ellipsis on the name */
+}
+
+.cart-line-name {
+  font-family: var(--f-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cart-line-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Price column
+--------------------------------------------------------------------------- */
+
+.cart-line-price-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.cart-line-unit-price {
+  font-family: var(--f-mono);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.cart-line-total-price {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   Quantity stepper column
+--------------------------------------------------------------------------- */
+
+.cart-line-qty {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: center;
+}
+
+.cart-line-qty-num {
+  min-width: 36px;
+  text-align: center;
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* "of N" available label */
+.cart-line-qty-avail {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Remove column
+--------------------------------------------------------------------------- */
+
+.cart-line-remove {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Icon-only trash button — compact, square; turns hot on hover */
+.cart-line-trash {
+  padding: 6px;
+  min-width: 0;
+  line-height: 0;
+  color: var(--text-dim);
+}
+
+.cart-line-trash:hover:not(:disabled) {
+  color: var(--hot, var(--warn));
+  border-color: var(--hot, var(--warn));
+}
+
+/* ---------------------------------------------------------------------------
+   Per-seller subcart footer (item count + seller subtotal)
+--------------------------------------------------------------------------- */
+
+.cart-subcart-foot {
+  padding: 10px var(--pad, 16px);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.cart-subcart-total {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cart-subcart-total-val {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Grand total panel (cart-level money rows)
+--------------------------------------------------------------------------- */
+
+.cart-grand-total {
+  padding: var(--pad, 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Key-value grid for the individual money lines */
+.cart-subcart-costs {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 16px;
+  align-items: baseline;
+}
+
+.cart-grand-total-vals {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.cart-grand-total-val {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--good);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   Footer — "Open cart on CardTrader" button row
+--------------------------------------------------------------------------- */
+
+.cart-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.cart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+}

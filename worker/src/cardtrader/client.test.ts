@@ -15,8 +15,56 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { createCardTraderClient } from './client';
+import { createCardTraderClient, buildBuyUrl, slugify } from './client';
 import { CardTraderError } from './types';
+
+// ---------------------------------------------------------------------------
+// buildBuyUrl / slugify — readable, locale-free card links
+// ---------------------------------------------------------------------------
+
+describe('slugify', () => {
+  it('lowercases, strips punctuation, and hyphenates', () => {
+    expect(slugify('Ravenous Robots (Extended Art)')).toBe('ravenous-robots-extended-art');
+  });
+
+  it('strips accents to their base letter', () => {
+    expect(slugify('Jötun Grunt')).toBe('jotun-grunt');
+  });
+
+  it('collapses repeated separators and trims edges', () => {
+    expect(slugify('  Fire // Ice  ')).toBe('fire-ice');
+  });
+
+  it('returns empty string for symbol-only input', () => {
+    expect(slugify('!!!')).toBe('');
+  });
+});
+
+describe('buildBuyUrl', () => {
+  it('appends card + expansion slug, no locale segment', () => {
+    expect(
+      buildBuyUrl(367975, 'Ravenous Robots (Extended Art)', 'Teenage Mutant Ninja Turtles Collectors'),
+    ).toBe(
+      'https://www.cardtrader.com/cards/367975-ravenous-robots-extended-art-teenage-mutant-ninja-turtles-collectors',
+    );
+  });
+
+  it('uses just the card slug when no expansion is given', () => {
+    expect(buildBuyUrl(123, 'Lightning Bolt')).toBe(
+      'https://www.cardtrader.com/cards/123-lightning-bolt',
+    );
+  });
+
+  it('falls back to the bare id when names are absent or empty', () => {
+    expect(buildBuyUrl(123)).toBe('https://www.cardtrader.com/cards/123');
+    expect(buildBuyUrl(123, null, null)).toBe('https://www.cardtrader.com/cards/123');
+    expect(buildBuyUrl(123, '!!!')).toBe('https://www.cardtrader.com/cards/123');
+  });
+
+  it('never emits a hardcoded locale path', () => {
+    expect(buildBuyUrl(367975, 'Ravenous Robots')).not.toMatch(/\/(en|it)\/cards\//);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

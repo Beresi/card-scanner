@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  cartAdd,
+  cartRemove,
   createWatchItem,
   deleteWatchItem,
   getCatalogProgress,
+  getCart,
   getConfig,
   getDeals,
   getHealth,
@@ -18,7 +21,7 @@ import {
   resetWatchField,
   runScanNow,
 } from './client';
-import type { CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
+import type { Cart, CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
 
 // ---------------------------------------------------------------------------
 // Filter shape — used by the Deal Feed command bar
@@ -215,7 +218,7 @@ export function useDeleteWatchItem() {
  * useResetWatchField — PATCH /api/watchlist/:id/reset { field }.
  *
  * Nulls a single resettable override column back to inherit (§9a).
- * Only 'threshold_pct' and 'telegram_min_discount_pct' are accepted by the server.
+ * Only 'min_discount_pct' and 'telegram_min_discount_pct' are accepted by the server.
  * Invalidates ['watchlist'] so the inspector flips back to "inherit · {default}".
  */
 export function useResetWatchField() {
@@ -325,6 +328,57 @@ export function useRunScan() {
       void qc.invalidateQueries({ queryKey: ['deals'] });
       void qc.invalidateQueries({ queryKey: ['scanRuns'] });
       void qc.invalidateQueries({ queryKey: ['health'] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Cart hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * useCart — GET /api/cart.
+ *
+ * Fetches the current CardTrader cart. staleTime of 30s is reasonable — the
+ * cart only changes when the user explicitly adds/removes items, so no
+ * aggressive polling is needed. Invalidated by useCartAdd / useCartRemove.
+ */
+export function useCart() {
+  return useQuery<Cart, Error>({
+    queryKey: ['cart'] as const,
+    queryFn: getCart,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * useCartAdd — POST /api/cart/add.
+ *
+ * Adds a quantity of a product to the cart. Invalidates ['cart'] on success
+ * so the view re-fetches and reflects the updated cart immediately.
+ */
+export function useCartAdd() {
+  const qc = useQueryClient();
+  return useMutation<Cart, Error, { productId: number; quantity: number }>({
+    mutationFn: ({ productId, quantity }) => cartAdd(productId, quantity),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['cart'] });
+    },
+  });
+}
+
+/**
+ * useCartRemove — POST /api/cart/remove.
+ *
+ * Removes a quantity of a product from the cart. Invalidates ['cart'] on
+ * success so the view re-fetches and reflects the updated cart immediately.
+ */
+export function useCartRemove() {
+  const qc = useQueryClient();
+  return useMutation<Cart, Error, { productId: number; quantity: number }>({
+    mutationFn: ({ productId, quantity }) => cartRemove(productId, quantity),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['cart'] });
     },
   });
 }

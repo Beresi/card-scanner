@@ -41,7 +41,7 @@ export type DetectionMode = 'discount' | 'price';
  * Every column in the `watchlist` table, typed as D1 returns them.
  *
  * Nullability matches `schema.sql` exactly:
- *  - `threshold_pct`, `telegram_min_discount_pct`, `telegram_max_price_cents`,
+ *  - `min_discount_pct`, `telegram_min_discount_pct`, `telegram_max_price_cents`,
  *    `telegram_min_savings_cents`, `detection_mode`, `max_price_cents`,
  *    `min_condition`, `foil_pref`, `importance`, `telegram_enabled` are nullable
  *    override columns (no `NOT NULL` in the DDL). NULL means "inherit from config
@@ -64,7 +64,7 @@ export interface WatchlistRow {
   min_condition: string | null;     // §9a nullable override — NULL → inherit config.default_min_condition
   foil_pref: FoilPref | null;      // §9a nullable override — NULL → inherit config.new_ticket_foil_pref
   allow_graded: 0 | 1;             // NOT NULL DEFAULT 0
-  threshold_pct: number | null;    // nullable — NULL → inherit config.default_threshold_pct
+  min_discount_pct: number | null; // nullable — NULL → inherit config.default_discount_pct
   importance: Importance | null;   // §9a nullable override — NULL → inherit config.new_ticket_importance
   telegram_enabled: 0 | 1 | null; // §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled
   telegram_min_discount_pct: number | null;  // nullable — NULL → inherit config.telegram_min_discount_pct
@@ -79,6 +79,11 @@ export interface WatchlistRow {
   // Card-type identity columns (migration 0005; only set for type='card')
   card_name_norm: string | null;   // normalized name; NULL for non-card types
   expansion_filter: string | null; // JSON int array of expansion_ids; NULL/[] = all sets
+  // Derived (NOT a stored column) — a representative blueprint id for a
+  // type='card' row, computed at read time from the catalog by matching
+  // card_name_norm. Used to build the /cards/{id}/versions link. NULL for
+  // non-card rows or when the card's set isn't in the local catalog yet.
+  repr_blueprint_id?: number | null;
 }
 
 /**
@@ -93,7 +98,7 @@ export interface ConfigRow {
   id: 1;
 
   // Deal-logic defaults (§9a — tickets with NULL override columns fall back here)
-  default_threshold_pct: number;   // NOT NULL DEFAULT 50
+  default_discount_pct: number;    // NOT NULL DEFAULT 50
   default_min_condition: string;   // NOT NULL DEFAULT 'Near Mint'
   cohort_size: number;             // NOT NULL DEFAULT 10
   min_cohort: number;              // NOT NULL DEFAULT 5
@@ -194,7 +199,7 @@ export interface ScanRunRow {
  * columns are `| null` because they have no config fallback (NULL = unbounded).
  *
  * Consumed by:
- *  - `scan/dealEngine` — min_condition, foil_pref, allow_graded, threshold_pct,
+ *  - `scan/dealEngine` — min_condition, foil_pref, allow_graded, min_discount_pct,
  *    cohort_size, min_cohort, detection_mode, max_price_cents (deal-logic fields).
  *  - `telegram/routing` — importance, telegram_enabled, telegram_min_discount_pct,
  *    telegram_max_price_cents, telegram_min_savings_cents (Phase-2 routing fields).
@@ -206,7 +211,7 @@ export interface EffectiveSettings {
   min_condition: Condition;
   foil_pref: FoilPref;
   allow_graded: boolean;
-  threshold_pct: number;
+  min_discount_pct: number;
   cohort_size: number;         // from config only (no per-ticket override column)
   min_cohort: number;          // from config only (no per-ticket override column)
   min_price_cents: number;     // from config only — candidate must cost ≥ this
@@ -335,7 +340,7 @@ export interface WatchlistInsert {
   active?: 0 | 1;
 
   // §9a nullable override columns — NULL → inherit config at scan time
-  threshold_pct?: number | null;
+  min_discount_pct?: number | null;
   telegram_min_discount_pct?: number | null;
   // §9a nullable override columns (migration 0005) — NULL → inherit config at scan time
   detection_mode?: string | null;

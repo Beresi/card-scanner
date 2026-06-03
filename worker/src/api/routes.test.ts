@@ -33,6 +33,8 @@ import {
   getConfig,
   listActiveWatchlist,
   countActiveExpansionBlueprints,
+  countActiveCardBlueprints,
+  countActiveWatchlist,
   countScannedThisCycle,
 } from '../db/repo';
 import { makeD1, seedDeal, seedWatchlist, seedScanRun } from './__test-helpers__/d1';
@@ -54,6 +56,9 @@ const emptyClient: CardTraderClient = {
   marketplaceProducts: () => Promise.reject(new Error('not used in route tests')),
   expansions: (): Promise<Expansion[]> => Promise.resolve([]),
   blueprintsExport: (): Promise<Blueprint[]> => Promise.resolve([]),
+  getCart: () => Promise.reject(new Error('not used in route tests')),
+  cartAdd: () => Promise.reject(new Error('not used in route tests')),
+  cartRemove: () => Promise.reject(new Error('not used in route tests')),
 };
 
 const resolveRouter = createResolveRouter({
@@ -94,6 +99,7 @@ testApp.get('/api/health', async (c) => {
   let scan_mode = 'chunked';
   let scan_total = 0;
   let scan_done = 0;
+  let active_watch_count: number | null = null;
 
   try {
     const run = await getLatestScanRun(c.env.DB);
@@ -117,16 +123,23 @@ testApp.get('/api/health', async (c) => {
       .filter((w) => w.type === 'expansion')
       .map((w) => w.cardtrader_id)
       .filter((id): id is number => id !== null);
+    const activeCardItems = watchlist
+      .filter((w) => w.type === 'card')
+      .map((w) => ({ card_name_norm: w.card_name_norm, expansion_filter: w.expansion_filter }));
     scan_mode = config.scan_mode;
-    scan_total = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
+    const expansionTotal = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
+    const cardTotal = await countActiveCardBlueprints(c.env.DB, activeCardItems, activeExpansionIds);
+    scan_total = expansionTotal + cardTotal;
     scan_done = config.scan_cycle_started_at !== null
       ? await countScannedThisCycle(c.env.DB, activeExpansionIds, config.scan_cycle_started_at)
       : 0;
     if (scan_done > scan_total) { scan_done = scan_total; }
+    active_watch_count = await countActiveWatchlist(c.env.DB);
   } catch {
     scan_mode = 'chunked';
     scan_total = 0;
     scan_done = 0;
+    active_watch_count = null;
   }
 
   return c.json({
@@ -143,6 +156,7 @@ testApp.get('/api/health', async (c) => {
     scan_mode,
     scan_total,
     scan_done,
+    active_watch_count,
   });
 });
 
@@ -247,10 +261,10 @@ describe('GET /api/config', () => {
     expect(res.status).toBe(200);
     const body = await res.json<ConfigRow>();
     expect(body.id).toBe(1);
-    // Schema seeds default_threshold_pct = 50
-    expect(body.default_threshold_pct).toBe(50);
+    // Schema seeds default_discount_pct = 50
+    expect(body.default_discount_pct).toBe(50);
     // Money is integer — never float
-    expect(Number.isInteger(body.default_threshold_pct)).toBe(true);
+    expect(Number.isInteger(body.default_discount_pct)).toBe(true);
     expect(body.telegram_min_discount_pct).toBe(60);
   });
 });
@@ -260,16 +274,16 @@ describe('PATCH /api/config', () => {
     const { db } = makeD1();
     const env = makeEnv(db);
 
-    const patchRes = await PATCH(env, `${BASE}/api/config`, { default_threshold_pct: 40 });
+    const patchRes = await PATCH(env, `${BASE}/api/config`, { default_discount_pct: 60 });
     expect(patchRes.status).toBe(200);
     const patched = await patchRes.json<ConfigRow>();
-    expect(patched.default_threshold_pct).toBe(40);
-    expect(Number.isInteger(patched.default_threshold_pct)).toBe(true);
+    expect(patched.default_discount_pct).toBe(60);
+    expect(Number.isInteger(patched.default_discount_pct)).toBe(true);
 
     // Subsequent GET reflects the change
     const getRes = await GET(env, `${BASE}/api/config`);
     const got = await getRes.json<ConfigRow>();
-    expect(got.default_threshold_pct).toBe(40);
+    expect(got.default_discount_pct).toBe(60);
   });
 
   it('updates telegram_min_discount_pct as integer cents', async () => {
@@ -302,18 +316,18 @@ describe('PATCH /api/config', () => {
     expect(res.status).toBe(200);
     const body = await res.json<ConfigRow>();
     // Should return the unchanged row
-    expect(body.default_threshold_pct).toBe(50);
+    expect(body.default_discount_pct).toBe(50);
   });
 
   it('does not update id or updated_at from the body', async () => {
     const { db } = makeD1();
     const env = makeEnv(db);
     // Attempt to change id — should be silently ignored
-    const res = await PATCH(env, `${BASE}/api/config`, { id: 999, default_threshold_pct: 45 });
+    const res = await PATCH(env, `${BASE}/api/config`, { id: 999, default_discount_pct: 55 });
     expect(res.status).toBe(200);
     const body = await res.json<ConfigRow>();
     expect(body.id).toBe(1);
-    expect(body.default_threshold_pct).toBe(45);
+    expect(body.default_discount_pct).toBe(55);
   });
 
   it('schema defaults: currency is USD, min_price_cents is 200, min_savings_cents is 100', async () => {
@@ -415,6 +429,38 @@ describe('GET /api/watchlist', () => {
     expect(body[0]!.label).toBe('Black Lotus');
     expect(body[0]!.cardtrader_id).toBe(10050);
   });
+
+  it('derives repr_blueprint_id for a card-type row from the catalog (newest printing)', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    raw.exec(`INSERT INTO watchlist (type, label, card_name_norm, active) VALUES ('card', 'Black Lotus', 'black lotus', 1)`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (101, 10, 'Black Lotus', 'black lotus')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (103, 12, 'Black Lotus', 'black lotus')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (102, 11, 'Black Lotus', 'black lotus')`);
+    const res = await GET(env, `${BASE}/api/watchlist`);
+    const body = await res.json<WatchlistRow[]>();
+    // Highest matching blueprint id wins (most-recent printing).
+    expect(body[0]!.repr_blueprint_id).toBe(103);
+  });
+
+  it('leaves repr_blueprint_id null for a card with no catalog match', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    raw.exec(`INSERT INTO watchlist (type, label, card_name_norm, active) VALUES ('card', 'Unsynced Card', 'unsynced card', 1)`);
+    const res = await GET(env, `${BASE}/api/watchlist`);
+    const body = await res.json<WatchlistRow[]>();
+    expect(body[0]!.repr_blueprint_id ?? null).toBeNull();
+  });
+
+  it('leaves repr_blueprint_id null for a non-card (blueprint) row', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('blueprint', 10050, 'Black Lotus', 1)`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (101, 10, 'Black Lotus', 'black lotus')`);
+    const res = await GET(env, `${BASE}/api/watchlist`);
+    const body = await res.json<WatchlistRow[]>();
+    expect(body[0]!.repr_blueprint_id ?? null).toBeNull();
+  });
 });
 
 describe('POST /api/watchlist', () => {
@@ -432,7 +478,7 @@ describe('POST /api/watchlist', () => {
     expect(body.cardtrader_id).toBe(10050);
     expect(body.label).toBe('Black Lotus');
     // §9a: new items are born inheriting — override columns must be NULL
-    expect(body.threshold_pct).toBeNull();
+    expect(body.min_discount_pct).toBeNull();
     expect(body.telegram_min_discount_pct).toBeNull();
     expect(body.telegram_max_price_cents).toBeNull();
     expect(body.telegram_min_savings_cents).toBeNull();
@@ -618,25 +664,25 @@ describe('DELETE /api/watchlist/:id', () => {
 });
 
 describe('PATCH /api/watchlist/:id/reset', () => {
-  it('nulls threshold_pct back to inherit (200)', async () => {
+  it('nulls min_discount_pct back to inherit (200)', async () => {
     const { db, raw } = makeD1();
     const env = makeEnv(db);
     const id = seedWatchlist(raw, {
       cardtrader_id: 10050,
       label: 'Black Lotus',
-      threshold_pct: 40,
+      min_discount_pct: 60,
     });
 
     // Verify it was seeded with a value
     const beforeRes = await GET(env, `${BASE}/api/watchlist`);
     const before = await beforeRes.json<WatchlistRow[]>();
-    expect(before[0]!.threshold_pct).toBe(40);
+    expect(before[0]!.min_discount_pct).toBe(60);
 
     // Reset it
-    const res = await PATCH(env, `${BASE}/api/watchlist/${id}/reset`, { field: 'threshold_pct' });
+    const res = await PATCH(env, `${BASE}/api/watchlist/${id}/reset`, { field: 'min_discount_pct' });
     expect(res.status).toBe(200);
     const body = await res.json<WatchlistRow>();
-    expect(body.threshold_pct).toBeNull();
+    expect(body.min_discount_pct).toBeNull();
   });
 
   it('nulls telegram_min_discount_pct back to inherit (200)', async () => {
@@ -683,7 +729,7 @@ describe('PATCH /api/watchlist/:id/reset', () => {
   it('returns 404 for an unknown watchlist id', async () => {
     const { db } = makeD1();
     const env = makeEnv(db);
-    const res = await PATCH(env, `${BASE}/api/watchlist/9999/reset`, { field: 'threshold_pct' });
+    const res = await PATCH(env, `${BASE}/api/watchlist/9999/reset`, { field: 'min_discount_pct' });
     // The route returns 404 when the id doesn't exist but the field is valid.
     // NOTE: resetWatchlistField does an UPDATE then getWatchlistById. If the id
     // doesn't exist, getWatchlistById returns null → route returns 404.
@@ -1232,6 +1278,7 @@ interface HealthBody {
   scan_mode: string;
   scan_total: number;
   scan_done: number;
+  active_watch_count: number | null;
 }
 
 describe('GET /api/health', () => {
@@ -1411,6 +1458,158 @@ describe('GET /api/health', () => {
     const body = await res.json<HealthBody>();
     expect(body.scan_done).toBe(0);
     expect(body.scan_total).toBe(1);
+  });
+
+  it('returns active_watch_count=0 when watchlist is empty', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.active_watch_count).toBe(0);
+  });
+
+  it('returns active_watch_count=1 for a single active expansion item', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 500, 'Set X', 1)`);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.active_watch_count).toBe(1);
+  });
+
+  it('returns active_watch_count=1 when one item is active and one is inactive', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 501, 'Active', 1)`);
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 502, 'Inactive', 0)`);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.active_watch_count).toBe(1);
+  });
+
+  it('includes card-type blueprint count in scan_total', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    // Insert a card-type watchlist item with a known name_norm
+    raw.exec(`INSERT INTO watchlist (type, label, card_name_norm, active) VALUES ('card', 'Black Lotus', 'black lotus', 1)`);
+    // Seed 3 blueprints matching the card name
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (101, 10, 'Black Lotus', 'black lotus')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (102, 11, 'Black Lotus', 'black lotus')`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (103, 12, 'Black Lotus', 'black lotus')`);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    expect(body.scan_total).toBe(3);
+  });
+
+  it('does not double-count blueprints owned by an active expansion item', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    // Active expansion item for expansion 10 — owns blueprint 101
+    raw.exec(`INSERT INTO watchlist (type, cardtrader_id, label, active) VALUES ('expansion', 10, 'Alpha', 1)`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (101, 10, 'Black Lotus', 'black lotus')`);
+    // Active card item that matches blueprint 101 (expansion 10) AND 102 (expansion 11)
+    raw.exec(`INSERT INTO watchlist (type, label, card_name_norm, active) VALUES ('card', 'Black Lotus', 'black lotus', 1)`);
+    raw.exec(`INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (102, 11, 'Black Lotus', 'black lotus')`);
+    const res = await GET(env, `${BASE}/api/health`);
+    const body = await res.json<HealthBody>();
+    // expansion: 1 blueprint (101); card: 1 additional (102, not 101 which belongs to expansion)
+    expect(body.scan_total).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/config — min_condition validation
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/config — default_min_condition validation (Task 1c)', () => {
+  it('rejects an unknown string with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { default_min_condition: 'LP' });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('rejects a legacy TCGplayer code with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { default_min_condition: 'NM' });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts each canonical condition name', async () => {
+    const canonicals = ['Mint', 'Near Mint', 'Slightly Played', 'Moderately Played', 'Played', 'Heavily Played', 'Poor'];
+    for (const cond of canonicals) {
+      const { db } = makeD1();
+      const env = makeEnv(db);
+      const res = await PATCH(env, `${BASE}/api/config`, { default_min_condition: cond });
+      expect(res.status).toBe(200);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/watchlist — min_condition validation (Task 1c)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/watchlist — min_condition validation', () => {
+  it('rejects a legacy code min_condition with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await POST(env, `${BASE}/api/watchlist`, {
+      type: 'blueprint',
+      cardtrader_id: 999,
+      label: 'Test Card',
+      min_condition: 'LP',
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('accepts a canonical min_condition on POST', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await POST(env, `${BASE}/api/watchlist`, {
+      type: 'blueprint',
+      cardtrader_id: 998,
+      label: 'Test Card',
+      min_condition: 'Slightly Played',
+    });
+    expect(res.status).toBe(201);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/watchlist/:id — min_condition validation (Task 1c)
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/watchlist/:id — min_condition validation', () => {
+  it('rejects a legacy code min_condition with 400', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    const id = seedWatchlist(raw, { cardtrader_id: 777, label: 'Card' });
+    const res = await PATCH(env, `${BASE}/api/watchlist/${id}`, { min_condition: 'MP' });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('accepts a canonical min_condition on PATCH', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    const id = seedWatchlist(raw, { cardtrader_id: 776, label: 'Card' });
+    const res = await PATCH(env, `${BASE}/api/watchlist/${id}`, { min_condition: 'Moderately Played' });
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts null min_condition on PATCH (resets to inherit)', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    const id = seedWatchlist(raw, { cardtrader_id: 775, label: 'Card' });
+    const res = await PATCH(env, `${BASE}/api/watchlist/${id}`, { min_condition: null });
+    expect(res.status).toBe(200);
   });
 });
 

@@ -288,15 +288,15 @@ export function seedWatchlist(
     type?: string;
     cardtrader_id: number;
     label: string;
-    threshold_pct?: number | null;
+    min_discount_pct?: number | null;
   },
 ): number {
-  const { type = 'blueprint', cardtrader_id, label, threshold_pct = null } = fields;
+  const { type = 'blueprint', cardtrader_id, label, min_discount_pct = null } = fields;
   const info = raw
     .prepare(
-      `INSERT INTO watchlist (type, cardtrader_id, label, threshold_pct)
+      `INSERT INTO watchlist (type, cardtrader_id, label, min_discount_pct)
        VALUES (?, ?, ?, ?)`,
     )
-    .run(type, cardtrader_id, label, threshold_pct);
+    .run(type, cardtrader_id, label, min_discount_pct);
   return Number(info.lastInsertRowid);
 }

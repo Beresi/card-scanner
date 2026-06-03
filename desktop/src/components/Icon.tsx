@@ -21,6 +21,8 @@
  *   card
  *   layers
  *   chevron / chevron-right
+ *   cart
+ *   trash
  *
  * The `name` prop accepts both the canonical name and its aliases.
  * Unknown names render null (no error) so callers can pass dynamic names safely.
@@ -52,7 +54,9 @@ export type IconName =
   | 'card'
   | 'layers'
   | 'chevron'
-  | 'chevron-right';
+  | 'chevron-right'
+  | 'cart'
+  | 'trash';
 
 export interface IconProps {
   name: IconName;
@@ -135,6 +139,21 @@ const PATHS: Record<string, PathFn> = {
     </>
   ),
   chevron: () => <path d="M9 6l6 6-6 6" />,
+  cart:    () => (
+    <>
+      <path d="M6 2H4a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1l1.5 9h9l1.5-9H8" />
+      <circle cx="9" cy="19" r="1.5" />
+      <circle cx="16" cy="19" r="1.5" />
+    </>
+  ),
+  trash:   () => (
+    <>
+      <path d="M4 7h16" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
+      <path d="M10 11v6M14 11v6" />
+    </>
+  ),
 };
 
 // Alias map: alternate name → canonical name

@@ -9,15 +9,17 @@
  * per-instance so the scanner creates exactly ONE client and the ~1 req/s
  * guarantee spans the whole run.
  *
- * NEVER log the Bearer token. NEVER call purchase/checkout endpoints.
+ * NEVER log the Bearer token.
+ * NEVER call /cart/purchase — cart add/view/remove only; the owner completes checkout manually.
  */
 
-import type { Info, MarketplaceQuery, MarketplaceResponse, Expansion, Blueprint } from './types';
+import type { Info, MarketplaceQuery, MarketplaceResponse, Expansion, Blueprint, Cart } from './types';
 import {
   parseInfo,
   parseMarketplaceResponse,
   parseExpansionArray,
   parseBlueprintArray,
+  parseCart,
   CardTraderError,
 } from './types';
 
@@ -49,6 +51,22 @@ export interface CardTraderClient {
    * a set. Large sets can return many rows. Throttled through the same queue.
    */
   blueprintsExport(expansionId: number): Promise<Blueprint[]>;
+  /**
+   * GET /cart — returns the current cart state.
+   * Throttled through the same ~1 req/s queue as every other method.
+   * NEVER call /cart/purchase — the owner checks out manually.
+   */
+  getCart(): Promise<Cart>;
+  /**
+   * POST /cart/add — adds `quantity` units of `productId` to the cart.
+   * Returns the updated Cart. Throttled through the same queue.
+   */
+  cartAdd(productId: number, quantity: number): Promise<Cart>;
+  /**
+   * POST /cart/remove — removes `quantity` units of `productId` from the cart.
+   * Returns the updated Cart. Throttled through the same queue.
+   */
+  cartRemove(productId: number, quantity: number): Promise<Cart>;
 }
 
 export interface ClientOptions {
@@ -112,17 +130,24 @@ export function createCardTraderClient(
   // Returns the parsed JSON body as `unknown` — callers narrow.
   // ---------------------------------------------------------------------------
 
-  async function ctFetch(path: string): Promise<unknown> {
+  async function ctFetch(
+    path: string,
+    options?: { method: 'POST'; body: Record<string, unknown> },
+  ): Promise<unknown> {
     let delay = BACKOFF_BASE_MS;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       onRequest(); // count every attempt, retries included
 
+      const isPost = options?.method === 'POST';
       const res = await fetchImpl(`${BASE_URL}${path}`, {
+        method: isPost ? 'POST' : 'GET',
         headers: {
           // NEVER log this header — token is high-sensitivity (read+write scope).
           Authorization: `Bearer ${token}`,
+          ...(isPost ? { 'Content-Type': 'application/json' } : {}),
         },
+        ...(isPost ? { body: JSON.stringify(options.body) } : {}),
       });
 
       // 401 — invalid / expired token. Do NOT retry; the scanner aborts on this.
@@ -142,8 +167,13 @@ export function createCardTraderClient(
       }
 
       // Any other non-OK response is a non-retryable error — caller catches and skips.
+      // Capture the upstream error body for diagnostics — it goes to console.error
+      // (wrangler tail) only, never to the API client (handleError returns a generic
+      // message). CardTrader's error body never contains our Bearer token.
       if (!res.ok) {
-        throw new CardTraderError(`request failed`, path, res.status);
+        let detail = '';
+        try { detail = (await res.text()).slice(0, 300); } catch { /* non-text body */ }
+        throw new CardTraderError(`request failed: ${detail}`, path, res.status);
       }
 
       // Parse as unknown — boundary parsers narrow to the correct shape.
@@ -189,19 +219,82 @@ export function createCardTraderClient(
     });
   }
 
-  return { info, marketplaceProducts, expansions, blueprintsExport };
+  async function getCart(): Promise<Cart> {
+    return throttled(async () => {
+      const raw = await ctFetch('/cart');
+      return parseCart(raw);
+    });
+  }
+
+  async function cartAdd(productId: number, quantity: number): Promise<Cart> {
+    return throttled(async () => {
+      const raw = await ctFetch('/cart/add', {
+        method: 'POST',
+        body: { product_id: productId, quantity },
+      });
+      return parseCart(raw);
+    });
+  }
+
+  async function cartRemove(productId: number, quantity: number): Promise<Cart> {
+    return throttled(async () => {
+      const raw = await ctFetch('/cart/remove', {
+        method: 'POST',
+        body: { product_id: productId, quantity },
+      });
+      return parseCart(raw);
+    });
+  }
+
+  return { info, marketplaceProducts, expansions, blueprintsExport, getCart, cartAdd, cartRemove };
 }
 
 // ---------------------------------------------------------------------------
 // buildBuyUrl
 //
-// VERIFY: the `https://www.cardtrader.com/cards/{blueprint_id}` pattern is
-// unverified (PRD §6 / §13). Confirm the real public URL during build and
-// fall back to a search URL if this pattern does not resolve.
+// CardTrader card pages are `https://www.cardtrader.com/cards/{blueprint_id}`.
+// The leading numeric id is the ONLY part used for lookup — any trailing slug
+// text is cosmetic and ignored (confirmed: `/cards/{id}-anything` resolves to
+// the same card and is NOT rewritten). We append a readable
+// `{slug(card)}-{slug(expansion)}` so the link is self-describing.
+//
+// We deliberately DO NOT include a locale segment (e.g. `/en/`, `/it/`):
+// CardTrader auto-redirects a bare `/cards/...` path to the visitor's own
+// locale, so hardcoding one would only fight the user's preference.
 // ---------------------------------------------------------------------------
 
-export function buildBuyUrl(blueprintId: number): string {
-  return `https://www.cardtrader.com/cards/${blueprintId}`;
+/**
+ * Slugify a card or expansion name the way CardTrader's URLs do: lowercase,
+ * accents stripped, every run of non-alphanumerics collapsed to a single
+ * hyphen, no leading/trailing hyphen. Returns '' for empty/symbol-only input.
+ *
+ * "Ravenous Robots (Extended Art)" → "ravenous-robots-extended-art"
+ */
+// Combining diacritical marks (U+0300–U+036F), built from an escaped string so
+// the source stays ASCII-only (no invisible combining chars in the file).
+const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
+
+export function slugify(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(COMBINING_MARKS, '') // drop combining accents: "Jötun" → "Jotun"
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // any non-alphanumeric run → single hyphen
+    .replace(/^-+|-+$/g, ''); // trim leading/trailing hyphens
+}
+
+export function buildBuyUrl(
+  blueprintId: number,
+  cardName?: string | null,
+  expansionName?: string | null,
+): string {
+  const slug = [cardName, expansionName]
+    .filter((s): s is string => !!s)
+    .map(slugify)
+    .filter(Boolean)
+    .join('-');
+  const tail = slug ? `${blueprintId}-${slug}` : `${blueprintId}`;
+  return `https://www.cardtrader.com/cards/${tail}`;
 }
 
 // ---------------------------------------------------------------------------

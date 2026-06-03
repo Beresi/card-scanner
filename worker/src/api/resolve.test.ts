@@ -136,6 +136,9 @@ function mockClient(overrides: Partial<CardTraderClient> = {}): CardTraderClient
     marketplaceProducts: vi.fn().mockRejectedValue(new Error('not used')),
     expansions: vi.fn().mockResolvedValue([]),
     blueprintsExport: vi.fn().mockResolvedValue([]),
+    getCart: vi.fn().mockRejectedValue(new Error('not used')),
+    cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+    cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     ...overrides,
   };
 }

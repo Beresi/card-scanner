@@ -16,7 +16,7 @@
  *   system       — Scan & data + Maintenance
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { Btn }       from '../../components/Btn';
 import { Icon }      from '../../components/Icon';
@@ -27,6 +27,7 @@ import { Slider }    from '../../components/Slider';
 import { Status }    from '../../components/Status';
 import { Switch }    from '../../components/Switch';
 import { useCatalogProgress, useConfig, useConfigMutation } from '../../api/hooks';
+import { CONDITION_OPTIONS } from '../../lib/conditions';
 import type {
   Condition,
   Density,
@@ -73,13 +74,6 @@ const FONT_OPTIONS: { value: FontChoice; label: string; hint: string }[] = [
   { value: 'system',   label: 'System',       hint: 'System UI · monospace' },
 ];
 
-const CONDITION_OPTIONS: { value: string; label: string }[] = [
-  { value: 'NM', label: 'NM — Near Mint' },
-  { value: 'LP', label: 'LP — Lightly Played' },
-  { value: 'MP', label: 'MP — Moderately Played' },
-  { value: 'HP', label: 'HP — Heavily Played' },
-  { value: 'D',  label: 'D — Damaged' },
-];
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'dark',   label: 'Dark' },
@@ -153,24 +147,50 @@ interface NumInputProps {
   value: number;
   min?: number;
   max?: number;
+  /** Spinner/validation step. Pass 0.01 to allow decimal (e.g. money) entry. Default 1 (integer). */
+  step?: number;
   onChange: (v: number) => void;
   width?: number;
   suffix?: string;
   'aria-label'?: string;
 }
 
-function NumInput({ value, min, max, onChange, width = 80, suffix, 'aria-label': ariaLabel }: NumInputProps) {
+function NumInput({ value, min, max, step = 1, onChange, width = 80, suffix, 'aria-label': ariaLabel }: NumInputProps) {
+  // Local text state so decimal entry ("0.49", "2.5") isn't fought by the
+  // controlled numeric value (Number("0.") === 0 would otherwise strip the dot).
+  const [text, setText] = useState(() => String(value));
+
+  // Re-sync from the prop only when it genuinely diverges from what's typed
+  // (e.g. an external config refetch) — leaves in-progress decimals like "0." alone.
+  useEffect(() => {
+    if (Number(text) !== value) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function handleChange(raw: string) {
+    setText(raw);
+    if (raw.trim() === '') return;       // don't commit an empty field
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;     // ignore partial input like "-" or "1e"
+    let clamped = n;
+    if (min !== undefined) clamped = Math.max(min, clamped);
+    if (max !== undefined) clamped = Math.min(max, clamped);
+    onChange(clamped);
+  }
+
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <input
         type="number"
         className="cb-num"
         style={{ width }}
-        value={value}
+        value={text}
         min={min}
         max={max}
+        step={step}
         aria-label={ariaLabel}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => handleChange(e.target.value)}
+        onBlur={() => setText(String(value))}
       />
       {suffix && (
         <span className="cb-mono" style={{ fontSize: 12, color: 'var(--text-dim)' }}>
@@ -364,15 +384,18 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                 affects every inheriting watch item — it is a moving baseline, not a snapshot (§9a).
               </p>
               <div className="set-grid">
-                <Row label="Default threshold" hint="deal trigger">
+                <Row
+                  label="Min discount"
+                  hint="Flag a deal when the cheapest copy is at least this % below the median of the next-cheapest copies."
+                >
                   <Slider
-                    value={c.default_threshold_pct}
+                    value={c.default_discount_pct}
                     min={10}
                     max={90}
                     step={1}
                     suffix="%"
-                    label="Default threshold percent"
-                    onChange={(v) => cfg.mutate({ default_threshold_pct: v })}
+                    label="Minimum discount percent"
+                    onChange={(v) => cfg.mutate({ default_discount_pct: v })}
                   />
                 </Row>
 
@@ -471,6 +494,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   value={c.min_price_cents / 100}
                   min={0}
                   max={10000}
+                  step={0.01}
                   onChange={(v) => cfg.mutate({ min_price_cents: Math.round(v * 100) })}
                   suffix={c.currency}
                   aria-label="Minimum listing price"
@@ -482,6 +506,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   value={c.min_savings_cents / 100}
                   min={0}
                   max={10000}
+                  step={0.01}
                   onChange={(v) => cfg.mutate({ min_savings_cents: Math.round(v * 100) })}
                   suffix={c.currency}
                   aria-label="Minimum absolute savings"
@@ -550,7 +575,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
               </span>
             </Row>
 
-            <Row label="Global TG min discount" hint="stricter than app threshold">
+            <Row label="Global TG min discount" hint="stricter than app min discount">
               <Slider
                 value={c.telegram_min_discount_pct}
                 min={30}

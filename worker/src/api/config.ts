@@ -14,6 +14,7 @@ import type { Env } from '../index';
 import { getConfig, patchConfig } from '../db/repo';
 import { pickAllowed } from './validate';
 import type { ConfigRow } from '../db/types';
+import { CONDITIONS } from '../scan/conditions';
 
 export const configRouter = new Hono<{ Bindings: Env }>();
 
@@ -22,7 +23,7 @@ export const configRouter = new Hono<{ Bindings: Env }>();
 // ---------------------------------------------------------------------------
 
 const CONFIG_PATCH_FIELDS = [
-  'default_threshold_pct',
+  'default_discount_pct',
   'default_min_condition',
   'cohort_size',
   'min_cohort',
@@ -97,7 +98,14 @@ configRouter.patch('/', async (c) => {
       return c.json({ error: 'invalid_request' }, 400);
     }
 
-    // ── validate migration 0005 fields before allow-listing ──────────────────
+    // ── validate condition / mode fields before allow-listing ────────────────
+
+    // default_min_condition: must be one of the 7 canonical CardTrader grade names.
+    if (body['default_min_condition'] !== undefined) {
+      if (!(CONDITIONS as readonly string[]).includes(body['default_min_condition'] as string)) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
 
     // default_detection_mode must be 'discount' or 'price'.
     if (body['default_detection_mode'] !== undefined) {

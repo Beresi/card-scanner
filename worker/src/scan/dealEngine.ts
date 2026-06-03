@@ -77,7 +77,7 @@ function foilMatches(
  * Dispatches on settings.detection_mode:
  *
  * 'discount' (default) — Returns a DealResult when ALL three conditions hold:
- *  1. Candidate price ≤ threshold_pct % of the cohort median (% gate).
+ *  1. Candidate price is at least min_discount_pct % BELOW the cohort median (% gate).
  *  2. Candidate price ≥ min_price_cents (absolute price floor — suppresses bulk/penny-card
  *     false positives where the savings are trivially small in dollar terms).
  *  3. (Baseline − candidate) ≥ min_savings_cents (absolute savings floor — same guard).
@@ -174,7 +174,9 @@ function evaluateDiscountMode(
   //
   //    All three conditions must hold (integer-cents comparisons only —
   //    NEVER branch on the rounded discountPct):
-  //      a) % gate:          candidate.price.cents <= (threshold_pct/100) * baseline
+  //      a) % gate:          candidate.price.cents <= (1 - min_discount_pct/100) * baseline
+  //                          i.e. candidate is at least min_discount_pct% BELOW the median.
+  //                          min_discount_pct=0 means "any copy at or below the median qualifies".
   //      b) price floor:     candidate.price.cents >= min_price_cents
   //      c) savings floor:   savingsCents          >= min_savings_cents
   //
@@ -187,7 +189,7 @@ function evaluateDiscountMode(
   );
 
   const isDeal =
-    candidate.price.cents <= (settings.threshold_pct / 100) * baselineCents &&
+    candidate.price.cents <= (1 - settings.min_discount_pct / 100) * baselineCents &&
     candidate.price.cents >= settings.min_price_cents &&
     savingsCents >= settings.min_savings_cents;
 

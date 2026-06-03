@@ -24,6 +24,7 @@ import {
 import { parseIntParam, pickAllowed } from './validate';
 import type { WatchlistRow, WatchlistInsert } from '../db/types';
 import { normalizeCardName } from '../scan/cardName';
+import { CONDITIONS } from '../scan/conditions';
 
 export const watchlistRouter = new Hono<{ Bindings: Env }>();
 
@@ -39,7 +40,7 @@ const WATCHLIST_PATCH_FIELDS = [
   'min_condition',
   'foil_pref',
   'allow_graded',
-  'threshold_pct',
+  'min_discount_pct',
   'importance',
   'telegram_enabled',
   'telegram_min_discount_pct',
@@ -180,7 +181,12 @@ watchlistRouter.post('/', async (c) => {
 
     // ── shared optional fields ────────────────────────────────────────────────
     if (typeof body['game_id'] === 'number') { insert.game_id = body['game_id']; }
-    if (typeof body['min_condition'] === 'string') { insert.min_condition = body['min_condition']; }
+    if (typeof body['min_condition'] === 'string') {
+      if (!(CONDITIONS as readonly string[]).includes(body['min_condition'])) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      insert.min_condition = body['min_condition'];
+    }
     if (body['foil_pref'] === 'any' || body['foil_pref'] === 'foil' || body['foil_pref'] === 'nonfoil') {
       insert.foil_pref = body['foil_pref'];
     }
@@ -281,6 +287,11 @@ watchlistRouter.patch('/:id', async (c) => {
     }
 
     // ── validate the new optional override fields before allow-listing ────────
+    if (body['min_condition'] !== undefined && body['min_condition'] !== null) {
+      if (!(CONDITIONS as readonly string[]).includes(body['min_condition'] as string)) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
     if (body['detection_mode'] !== undefined && body['detection_mode'] !== null) {
       if (!(DETECTION_MODES as readonly string[]).includes(body['detection_mode'] as string)) {
         return c.json({ error: 'invalid_request' }, 400);

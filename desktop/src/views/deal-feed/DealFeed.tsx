@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
 import type { DealFilters } from '../../api/hooks';
-import { useDeals, useDealMutation } from '../../api/hooks';
+import { useCartAdd, useDeals, useDealMutation } from '../../api/hooks';
 import type { Deal } from '../../api/types';
 import { ApiError } from '../../api/client';
 import { DealCard, openBuyUrl } from './DealCard';
@@ -47,7 +47,8 @@ export function DealFeed() {
   // Server data — TanStack Query; never in useState.
   // ---------------------------------------------------------------------------
   const { data: deals, isLoading, isError, error, refetch } = useDeals(filters);
-  const mutation = useDealMutation();
+  const mutation    = useDealMutation();
+  const cartAdd     = useCartAdd();
 
   // ---------------------------------------------------------------------------
   // Action handlers — delegate to the mutation; cache invalidates on success.
@@ -63,6 +64,10 @@ export function DealFeed() {
   function handleBuy(deal: Deal) {
     if (!deal.buy_url) return;
     void openBuyUrl(deal.buy_url);
+  }
+
+  function handleAddToCart(deal: Deal) {
+    cartAdd.mutate({ productId: deal.product_id, quantity: 1 });
   }
 
   // ---------------------------------------------------------------------------
@@ -220,7 +225,9 @@ export function DealFeed() {
               onSeen={handleSeen}
               onDismiss={handleDismiss}
               onBuy={handleBuy}
+              onAddToCart={handleAddToCart}
               busy={mutation.isPending}
+              cartBusy={cartAdd.isPending}
             />
           ))}
         </div>

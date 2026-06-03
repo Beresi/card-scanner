@@ -47,6 +47,9 @@ import { Select } from '../../components/Select';
 import { Slider } from '../../components/Slider';
 import { Switch } from '../../components/Switch';
 import { usd } from '../../lib/format';
+import { CONDITION_OPTIONS } from '../../lib/conditions';
+import { openBuyUrl } from '../deal-feed/DealCard';
+import { buildWatchUrl } from '../../lib/cardtrader-url';
 import { select } from './selection';
 import { useWatchSelection } from './selection';
 import {
@@ -61,16 +64,8 @@ import {
 } from './effOf';
 
 // ---------------------------------------------------------------------------
-// Condition options
+// Detection mode options (local — not shared)
 // ---------------------------------------------------------------------------
-
-const CONDITION_OPTIONS = [
-  { value: 'NM', label: 'NM — Near Mint' },
-  { value: 'LP', label: 'LP — Light Play' },
-  { value: 'MP', label: 'MP — Moderate Play' },
-  { value: 'HP', label: 'HP — Heavy Play' },
-  { value: 'D',  label: 'D — Damaged' },
-];
 
 const DETECTION_MODE_OPTIONS = [
   { value: 'discount', label: 'Discount %' },
@@ -339,7 +334,7 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
   }
 
   // Helper: null a field back to inherit
-  function resetField(col: 'threshold_pct' | 'min_condition' | 'foil_pref' | 'importance' |
+  function resetField(col: 'min_discount_pct' | 'min_condition' | 'foil_pref' | 'importance' |
     'telegram_enabled' | 'telegram_min_discount_pct' | 'detection_mode' | 'max_price_cents') {
     patchItem.mutate({ id: item.id, patch: { [col]: null } as WatchItemPatch });
   }
@@ -365,7 +360,7 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
       return 'High importance — pushes on ANY deal, bypassing the discount gate.';
     }
     if (tgEff.value) {
-      return `Pushes only when discount ≥ ${effectiveTgDiscPct}% (stricter than the ${effectiveThrPct}% app threshold).`;
+      return `Pushes only when discount ≥ ${effectiveTgDiscPct}% (stricter than the app min discount of ${effectiveThrPct}%).`;
     }
     return 'App-only. Appears in the feed but never pings Telegram.';
   }
@@ -447,21 +442,21 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
 
         {/* Detection control — conditional on mode */}
         {effectiveDetect === 'discount' ? (
-          /* Discount mode: existing threshold slider */
+          /* Discount mode: min-discount slider */
           <InheritField
-            label="Threshold"
+            label="Min discount"
             inherited={thrEff.inherited}
             defaultLabel={thrEff.defaultLabel}
-            onReset={() => resetField('threshold_pct')}
+            onReset={() => resetField('min_discount_pct')}
           >
             <Slider
-              label="Discount threshold"
+              label="Minimum discount percent"
               value={effectiveThrPct}
               min={10}
               max={90}
               step={5}
               suffix="%"
-              onChange={(v) => patch({ threshold_pct: v })}
+              onChange={(v) => patch({ min_discount_pct: v })}
             />
           </InheritField>
         ) : (
@@ -588,8 +583,18 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
 
       </div>
 
-      {/* Footer: remove */}
+      {/* Footer: CardTrader link + remove */}
       <div className="insp-foot">
+        <Btn
+          variant="ghost"
+          className="cb-btn-sm"
+          onClick={() => void openBuyUrl(buildWatchUrl(item))}
+          title="View on CardTrader"
+          aria-label="View on CardTrader"
+        >
+          <Icon name="ext" size={13} />
+          View on CardTrader
+        </Btn>
         <Btn
           variant="danger"
           className="cb-btn-sm"

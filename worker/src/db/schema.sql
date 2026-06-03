@@ -6,7 +6,7 @@
 -- ─── §9 DDL ──────────────────────────────────────────────────────────────────
 
 -- What to scan.
--- Per-ticket override columns (threshold_pct, telegram_*, detection_mode,
+-- Per-ticket override columns (min_discount_pct, telegram_*, detection_mode,
 -- max_price_cents, min_condition, foil_pref, importance, telegram_enabled)
 -- are NULL = inherit from config at scan time. See §9a and resolveEffective().
 -- New tickets keep these NULL; the new-ticket form is pre-filled from
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
   -- §9a nullable override — NULL → inherit config.new_ticket_foil_pref at scan time
   foil_pref                   TEXT    CHECK (foil_pref IN ('any','foil','nonfoil')),
   allow_graded                INTEGER NOT NULL DEFAULT 0,
-  threshold_pct               INTEGER,                   -- NULL → use config.default_threshold_pct
+  min_discount_pct            INTEGER,                   -- NULL → use config.default_discount_pct (≥ this % below median)
   -- §9a nullable override — NULL → inherit config.new_ticket_importance at scan time
   importance                  TEXT    CHECK (importance IN ('high','normal')),
   -- §9a nullable override — NULL → inherit config.new_ticket_telegram_enabled at scan time
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS config (
   id                            INTEGER PRIMARY KEY CHECK (id = 1),
 
   -- Deal-logic defaults (§9a — tickets whose override column is NULL fall back here)
-  default_threshold_pct         INTEGER NOT NULL DEFAULT 50,
+  default_discount_pct          INTEGER NOT NULL DEFAULT 50,  -- min % below the cohort median to flag a deal
   default_min_condition         TEXT    NOT NULL DEFAULT 'Near Mint',
   cohort_size                   INTEGER NOT NULL DEFAULT 10,
   min_cohort                    INTEGER NOT NULL DEFAULT 5,

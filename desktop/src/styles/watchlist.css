@@ -19,7 +19,7 @@
   background: var(--panel);
 }
 
-/* 9-column grid: type icon | name+set | condition | foil | threshold | importance | telegram | hits | actions */
+/* 9-column grid: type icon | name+set | condition | foil | min discount | importance | telegram | hits | actions */
 .wt-head,
 .wr {
   display: grid;
@@ -99,9 +99,19 @@
 
 .wr-name {
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Inner column block: label + subtext stacked */
+.wr-name-text {
+  display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
+  flex: 1;
 }
 
 .wr-label {
@@ -365,7 +375,47 @@
 }
 
 .insp-foot {
-  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+/* Full-width, centered buttons so labels never clip in the narrow rail */
+.insp-foot .cb-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ============================================================
+   E. WATCH ROW — external link button
+   Sits inside .wr-name; appears on row hover only.
+   ============================================================ */
+
+.wr-ext-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin-top: 1px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius, 3px);
+  cursor: pointer;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  flex-shrink: 0;
+}
+
+.wr:hover .wr-ext-btn,
+.wr.is-sel .wr-ext-btn {
+  opacity: 1;
+}
+
+.wr-ext-btn:hover {
+  color: var(--accent);
 }
 
 /* Small hint text in the watchlist right rail */

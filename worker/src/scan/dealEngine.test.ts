@@ -64,7 +64,7 @@ function defaultSettings(
     min_condition: 'Near Mint',
     foil_pref: 'any',
     allow_graded: false,
-    threshold_pct: 50,
+    min_discount_pct: 50,
     cohort_size: 10,
     min_cohort: 5,
     // Floors set to 0 so existing §16 tests (which use penny-scale prices) remain valid.
@@ -372,10 +372,10 @@ describe('absolute deal floors — min_price_cents + min_savings_cents', () => {
     const candidate = makeProduct(250);
     const cohort = Array.from({ length: 10 }, () => makeProduct(300));
 
-    // Use a very loose % threshold (10%) so only the savings floor blocks it.
+    // Use a very loose % threshold (min_discount_pct=90, i.e. "90% off required" — passes at just 17%) so only the savings floor blocks it.
     const result = evaluateBlueprint(
       [candidate, ...cohort],
-      defaultSettings({ threshold_pct: 10, min_price_cents: 200, min_savings_cents: 100 }),
+      defaultSettings({ min_discount_pct: 90, min_price_cents: 200, min_savings_cents: 100 }),
     );
 
     // savingsCents = 300 - 250 = 50 < 100 → fails min_savings_cents → null
@@ -385,7 +385,7 @@ describe('absolute deal floors — min_price_cents + min_savings_cents', () => {
   // BOUNDARY — price floor exactly met: candidate = min_price_cents.
   it('price floor boundary: candidate exactly at min_price_cents — passes (inclusive >=)', () => {
     // candidate = 200¢ (exactly at floor), cohort median = 500¢, savings = 300¢
-    // % gate: 200 <= (50/100)*500 = 250 → true; price: 200 >= 200 → true; savings: 300 >= 100 → true
+    // % gate: 200 <= (1-50/100)*500 = 250 → true; price: 200 >= 200 → true; savings: 300 >= 100 → true
     const candidate = makeProduct(200);
     const cohort = Array.from({ length: 10 }, () => makeProduct(500));
 
@@ -416,14 +416,14 @@ describe('absolute deal floors — min_price_cents + min_savings_cents', () => {
   // BOUNDARY — savings floor exactly met: savingsCents = min_savings_cents.
   it('savings floor boundary: savings exactly at min_savings_cents — passes (inclusive >=)', () => {
     // candidate = 400¢, cohort median = 500¢, savings = 100¢ (exactly at floor)
-    // % gate: 400 <= (50/100)*500 = 250 → false… adjust: use threshold_pct=85
-    // 400 <= (85/100)*500 = 425 → true; savings = 100 >= 100 → true; price: 400 >= 200 → true
+    // % gate: 400 <= (1-50/100)*500 = 250 → false… adjust: use min_discount_pct=15
+    // 400 <= (1-15/100)*500 = 425 → true; savings = 100 >= 100 → true; price: 400 >= 200 → true
     const candidate = makeProduct(400);
     const cohort = Array.from({ length: 10 }, () => makeProduct(500));
 
     const result = evaluateBlueprint(
       [candidate, ...cohort],
-      defaultSettings({ threshold_pct: 85, min_price_cents: 200, min_savings_cents: 100 }),
+      defaultSettings({ min_discount_pct: 15, min_price_cents: 200, min_savings_cents: 100 }),
     );
 
     expect(result).not.toBeNull();
@@ -438,7 +438,7 @@ describe('absolute deal floors — min_price_cents + min_savings_cents', () => {
 
     const result = evaluateBlueprint(
       [candidate, ...cohort],
-      defaultSettings({ threshold_pct: 85, min_price_cents: 200, min_savings_cents: 100 }),
+      defaultSettings({ min_discount_pct: 15, min_price_cents: 200, min_savings_cents: 100 }),
     );
 
     expect(result).toBeNull();

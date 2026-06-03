@@ -52,7 +52,7 @@ Firebase, no Stripe/payments.
 
 ## Key invariants (do not violate)
 - **Money is always integer cents** — never floats; format only at the display edge.
-- **No purchase path** — the CardTrader token has write scope, but we never call buy/cart/checkout.
+- **No auto-purchase** — the desktop app may call CardTrader's `GET /cart`, `POST /cart/add`, and `POST /cart/remove` to view and manage the owner's cart, but we NEVER call `/cart/purchase` (or any checkout endpoint). The owner completes checkout manually on cardtrader.com.
 - **Dedupe on `product_id`** — one deal row + one Telegram push per listing.
 - **App feed = everything; Telegram = strict opt-in subset** (anti-spam is the core feature).
 - **Inheritance (§9a):** per-ticket override columns are `NULL` → fall back to `config`

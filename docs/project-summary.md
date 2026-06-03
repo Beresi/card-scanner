@@ -66,11 +66,11 @@ The system is split into an always-on cloud backend and a desktop client.
 - **In-app feed = everything; Telegram = a strict, opt-in subset** (anti-spam is the point).
 - **Inheritance:** per-ticket override columns are `NULL` → fall back to the `config`
   default at scan time; defaults are a moving baseline (PRD §9a).
-- **No purchase path** — the API supports buying; we never call it.
+- **No auto-purchase** — the desktop app may call CardTrader's `GET /cart`, `POST /cart/add`, and `POST /cart/remove` to view and manage the owner's cart, but we NEVER call `/cart/purchase` (or any checkout endpoint). The owner completes checkout manually on cardtrader.com.
 
 ## What this is NOT (v1 non-goals)
-Auto-buying/cart, shipping-aware totals, non-MTG games, multi-user/public access,
-currency conversion. (PRD §2.)
+Auto-purchasing/checkout, shipping-aware totals, non-MTG games, multi-user/public access,
+currency conversion. (PRD §2. Cart add/view/remove is implemented per owner decision 2026-06-01; /cart/purchase remains prohibited.)
 
 ## Where to look
 - `cardtrader-deal-scanner-PRD.md` — authoritative product + backend spec.

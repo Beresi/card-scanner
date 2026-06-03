@@ -166,6 +166,71 @@ export interface Blueprint {
 }
 
 // ---------------------------------------------------------------------------
+// Cart — GET /cart, POST /cart/add, POST /cart/remove.
+//
+// Money fields on the wire come back either as nested objects { cents, currency }
+// OR as flat *_cents integers.  The parser handles both forms; missing optional
+// fee fields are tolerated (set to undefined) — they vary by seller and payment method.
+//
+// NEVER call POST /cart/purchase — the owner checks out manually on cardtrader.com.
+// ---------------------------------------------------------------------------
+
+/** A money amount as returned by the CartTrader cart API. */
+export interface Money {
+  cents: number;
+  currency: string;
+}
+
+/** One line item inside a seller's subcart. */
+export interface CartItem {
+  quantity: number;
+  /** Unit price in cents. */
+  price_cents: number;
+  price_currency: string;
+  product: {
+    id: number;
+    name_en: string;
+  };
+}
+
+/**
+ * One seller's portion of the cart.
+ *
+ * NOTE: the live CardTrader /cart response carries NO money fields on subcarts —
+ * totals, shipping, and fees are all top-level on the Cart object. A subcart is
+ * just seller + line items. (A per-seller subtotal can be derived by summing
+ * line items at the display edge.)
+ */
+export interface Subcart {
+  id: number;
+  seller: {
+    id: number;
+    username: string;
+  };
+  /** True when this seller's items ship via CardTrader Zero. Absent on some carts. */
+  via_cardtrader_zero?: boolean;
+  cart_items: CartItem[];
+}
+
+/**
+ * Top-level cart object returned by GET /cart and the cart mutation endpoints.
+ *
+ * All money lives here (not on subcarts). Every money field is optional — an
+ * empty cart omits them, and we never throw on a missing total/fee.
+ */
+export interface Cart {
+  id: number;
+  total?: Money;
+  subtotal?: Money;
+  shipping_cost?: Money;
+  safeguard_fee_amount?: Money;
+  ct_zero_fee_amount?: Money;
+  payment_method_fee_fixed_amount?: Money;
+  payment_method_fee_percentage_amount?: Money;
+  subcarts: Subcart[];
+}
+
+// ---------------------------------------------------------------------------
 // Boundary parsers — narrow `unknown` → typed. Pure functions: no I/O.
 // Throw CardTraderError on any structural violation.
 // ---------------------------------------------------------------------------
@@ -262,6 +327,67 @@ export function parseInfo(raw: unknown): Info {
     id: obj['id'],
     name: typeof obj['name'] === 'string' ? obj['name'] : '',
     user_id: typeof obj['user_id'] === 'number' ? obj['user_id'] : obj['id'],
+  };
+}
+
+/**
+ * Parse the cart response body from GET /cart or the cart mutation endpoints.
+ *
+ * The top-level `cart` wrapper is optional: the API may return `{ cart: {...} }`
+ * or just the cart object directly.  Both forms are handled.
+ *
+ * Money fields tolerate two wire shapes:
+ *   - nested object  { cents: number, currency: string }
+ *   - flat integers  subtotal_cents / subtotal_currency (or similar *_cents keys)
+ * Missing optional fee fields (safeguard_fee_amount, ct_zero_fee_amount,
+ * payment_method_fee_*) are tolerated and set to undefined — never throw on them.
+ *
+ * A missing or empty subcarts array is treated as an empty cart (not an error).
+ */
+export function parseCart(raw: unknown): Cart {
+  const endpoint = '/cart';
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CardTraderError(
+      'cart response: expected an object, got ' + typeof raw,
+      endpoint,
+    );
+  }
+
+  // Unwrap the optional `cart` wrapper: { cart: { id, subcarts } } OR { id, subcarts }
+  const top = raw as Record<string, unknown>;
+  const cartObj: Record<string, unknown> =
+    top['cart'] !== undefined && top['cart'] !== null && typeof top['cart'] === 'object' && !Array.isArray(top['cart'])
+      ? (top['cart'] as Record<string, unknown>)
+      : top;
+
+  const id = requireInteger(cartObj['id'], 'cart.id', endpoint);
+
+  // Top-level money fields — all optional and tolerant of nested-object OR flat
+  // *_cents/*_currency forms. An empty cart omits them; never throw here.
+  const total = extractOptionalMoney(cartObj, 'total', 'cart', endpoint);
+  const subtotal = extractOptionalMoney(cartObj, 'subtotal', 'cart', endpoint);
+  const shipping_cost = extractOptionalMoney(cartObj, 'shipping_cost', 'cart', endpoint);
+  const safeguard_fee_amount = extractOptionalMoney(cartObj, 'safeguard_fee_amount', 'cart', endpoint);
+  const ct_zero_fee_amount = extractOptionalMoney(cartObj, 'ct_zero_fee_amount', 'cart', endpoint);
+  const payment_method_fee_fixed_amount = extractOptionalMoney(cartObj, 'payment_method_fee_fixed_amount', 'cart', endpoint);
+  const payment_method_fee_percentage_amount = extractOptionalMoney(cartObj, 'payment_method_fee_percentage_amount', 'cart', endpoint);
+
+  const rawSubcarts = cartObj['subcarts'];
+  const subcarts: Subcart[] = Array.isArray(rawSubcarts)
+    ? rawSubcarts.map((item, index) => parseSubcart(item, index, endpoint))
+    : [];
+
+  return {
+    id,
+    total,
+    subtotal,
+    shipping_cost,
+    safeguard_fee_amount,
+    ct_zero_fee_amount,
+    payment_method_fee_fixed_amount,
+    payment_method_fee_percentage_amount,
+    subcarts,
   };
 }
 
@@ -482,4 +608,136 @@ function requireBoolean(value: unknown, field: string, endpoint: string): boolea
     );
   }
   return value;
+}
+
+// ---------------------------------------------------------------------------
+// Cart helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a money field that may arrive as:
+ *   - a nested object { cents: number, currency: string }
+ *   - absent / null (caller passes a fallback)
+ *
+ * Flat *_cents / *_currency pairs are handled by the caller by pre-composing
+ * them into an object before calling this helper.
+ */
+function parseMoneyField(
+  raw: unknown,
+  ctx: string,
+  endpoint: string,
+): Money {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CardTraderError(`${ctx}: expected a money object`, endpoint);
+  }
+  const m = raw as Record<string, unknown>;
+  const cents = requireInteger(m['cents'], ctx + '.cents', endpoint);
+  const currency = requireString(m['currency'], ctx + '.currency', endpoint);
+  return { cents, currency };
+}
+
+/**
+ * Extract a Money value from a field that may be either:
+ *   - a nested { cents, currency } object under `key`
+ *   - flat integers under `${key}_cents` / `${key}_currency`
+ * Returns undefined when neither form is present (optional fee fields).
+ */
+function extractOptionalMoney(
+  obj: Record<string, unknown>,
+  key: string,
+  ctx: string,
+  endpoint: string,
+): Money | undefined {
+  if (obj[key] !== undefined && obj[key] !== null) {
+    return parseMoneyField(obj[key], `${ctx}.${key}`, endpoint);
+  }
+  // Try flat *_cents / *_currency form.
+  const centsKey = `${key}_cents`;
+  const currencyKey = `${key}_currency`;
+  if (obj[centsKey] !== undefined && obj[currencyKey] !== undefined) {
+    const cents = requireInteger(obj[centsKey], `${ctx}.${centsKey}`, endpoint);
+    const currency = requireString(obj[currencyKey], `${ctx}.${currencyKey}`, endpoint);
+    return { cents, currency };
+  }
+  return undefined;
+}
+
+function parseCartItem(raw: unknown, index: number, endpoint: string): CartItem {
+  const ctx = `cart_item[${index}]`;
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CardTraderError(`${ctx}: expected an object`, endpoint);
+  }
+
+  const item = raw as Record<string, unknown>;
+
+  const quantity = requireInteger(item['quantity'], ctx + '.quantity', endpoint);
+
+  // price_cents / price_currency may be top-level integers or a nested price object.
+  let price_cents: number;
+  let price_currency: string;
+  if (typeof item['price_cents'] === 'number') {
+    price_cents = requireInteger(item['price_cents'], ctx + '.price_cents', endpoint);
+    price_currency = typeof item['price_currency'] === 'string' ? item['price_currency'] : 'EUR';
+  } else if (item['price'] !== undefined && item['price'] !== null && typeof item['price'] === 'object') {
+    const priceObj = item['price'] as Record<string, unknown>;
+    price_cents = requireInteger(priceObj['cents'], ctx + '.price.cents', endpoint);
+    price_currency = typeof priceObj['currency'] === 'string' ? priceObj['currency'] : 'EUR';
+  } else {
+    throw new CardTraderError(`${ctx}: missing price_cents`, endpoint);
+  }
+
+  // product sub-object.
+  const rawProduct = item['product'];
+  if (rawProduct === null || typeof rawProduct !== 'object' || Array.isArray(rawProduct)) {
+    throw new CardTraderError(`${ctx}.product: expected an object`, endpoint);
+  }
+  const prod = rawProduct as Record<string, unknown>;
+  const productId = requireInteger(prod['id'], ctx + '.product.id', endpoint);
+  const name_en = typeof prod['name_en'] === 'string' ? prod['name_en'] : '';
+
+  return {
+    quantity,
+    price_cents,
+    price_currency,
+    product: { id: productId, name_en },
+  };
+}
+
+function parseSubcart(raw: unknown, index: number, endpoint: string): Subcart {
+  const ctx = `subcart[${index}]`;
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CardTraderError(`${ctx}: expected an object`, endpoint);
+  }
+
+  const s = raw as Record<string, unknown>;
+
+  const id = requireInteger(s['id'], ctx + '.id', endpoint);
+
+  // seller sub-object.
+  const rawSeller = s['seller'];
+  if (rawSeller === null || typeof rawSeller !== 'object' || Array.isArray(rawSeller)) {
+    throw new CardTraderError(`${ctx}.seller: expected an object`, endpoint);
+  }
+  const sellerObj = rawSeller as Record<string, unknown>;
+  const sellerId = requireInteger(sellerObj['id'], ctx + '.seller.id', endpoint);
+  const sellerUsername = requireString(sellerObj['username'], ctx + '.seller.username', endpoint);
+
+  // cart_items array — treat absent/non-array as empty rather than throwing.
+  const rawItems = s['cart_items'];
+  const cart_items: CartItem[] = Array.isArray(rawItems)
+    ? rawItems.map((item, i) => parseCartItem(item, i, endpoint))
+    : [];
+
+  // Subcarts carry NO money fields on the live API — only the seller's line items.
+  const via_cardtrader_zero =
+    typeof s['via_cardtrader_zero'] === 'boolean' ? s['via_cardtrader_zero'] : undefined;
+
+  return {
+    id,
+    seller: { id: sellerId, username: sellerUsername },
+    via_cardtrader_zero,
+    cart_items,
+  };
 }

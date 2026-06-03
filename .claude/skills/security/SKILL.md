@@ -1,13 +1,14 @@
 ---
 name: security
-description: Secrets, auth, and input-validation rules for the CardTrader Deal Scanner — Wrangler secrets (CARDTRADER_API_TOKEN, TELEGRAM_*), the high-sensitivity write/purchase-scoped CardTrader token, Hono route auth, no-public-D1 access, and on-device token storage in the Tauri host. Load before reading a secret from env, adding/changing a Hono route's auth, storing the desktop auth token, validating request input, or anytime you touch wrangler secrets / Cloudflare Access / .dev.vars / tauri.conf.json.
+description: Secrets, auth, and input-validation rules for the CardTrader Deal Scanner — Wrangler secrets (CARDTRADER_API_TOKEN, TELEGRAM_*), the high-sensitivity write/purchase-scoped CardTrader token, Hono route auth, no-public-D1 access, and on-device token storage in the Tauri host. Cart add/view/remove are permitted (owner decision 2026-06-01); /cart/purchase is NEVER called. Load before reading a secret from env, adding/changing a Hono route's auth, storing the desktop auth token, validating request input, or anytime you touch wrangler secrets / Cloudflare Access / .dev.vars / tauri.conf.json.
 ---
 
 # Security
 
 ## Purpose
 This is a single-user tool with one high-value secret: the **CardTrader API token has
-read + WRITE/purchase scope** (PRD §12, §2). Nothing here calls a purchase endpoint, but a
+read + WRITE/purchase scope** (PRD §12, §2). Cart add/view/remove endpoints are implemented
+(owner decision 2026-06-01); `/cart/purchase` and any checkout flow are NEVER called. A
 leaked token could drain the account, so treat every secret as high-sensitivity. Two trust
 zones: the **Worker backend** (holds the CardTrader/Telegram secrets, talks to CardTrader)
 and the **Tauri desktop app** (holds one credential to reach the API). Secrets live in
@@ -132,8 +133,12 @@ const API_AUTH = 'bearer-abc123';                     // ✗ secret baked into t
 - **CardTrader token = write/purchase scope.** Highest-sensitivity secret in the project.
   If it ever appears in a log, a commit, a response, or the bundle, **rotate it immediately**
   (regenerate on CardTrader + `wrangler secret put` the new value). PRD §12.
-- **Never implement a purchase/cart endpoint — ever.** Auto-buy is an explicit non-goal (PRD
-  §2). The app only reads marketplace data and links out; the human buys manually.
+- **Cart add/view/remove are implemented (owner decision 2026-06-01); `/cart/purchase` is
+  NEVER implemented or called — ever.** `GET /cart`, `POST /cart/add`, and `POST /cart/remove`
+  are permitted so the desktop can show and manage the owner's live cart. The absolute line is
+  `/cart/purchase` (and any checkout flow): auto-buy remains an explicit non-goal (PRD §2).
+  Any code path that calls a purchase or checkout endpoint is a Critical defect regardless of
+  framing.
 - **Never log secrets.** Not the CardTrader token, Telegram bot token, chat id, or API auth
   token. Log endpoint + HTTP status, never `Authorization` headers or `env` values.
 - **No public D1 routes.** Every route that reads/writes `DB` is behind the bearer / Access

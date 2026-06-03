@@ -16,7 +16,7 @@
  * PRD §9a; docs/documentation/data-model.md.
  */
 
-import type { Condition } from '../scan/conditions';
+import { normalizeCondition } from '../scan/conditions';
 import type { WatchlistRow, ConfigRow, EffectiveSettings, DetectionMode } from './types';
 
 /**
@@ -31,8 +31,21 @@ export function resolveEffective(
 ): EffectiveSettings {
   return {
     // min_condition: §9a nullable override — NULL → inherit config.default_min_condition.
-    // Uses `??` so that an explicit value (even an unusual one) is always honored.
-    min_condition: (ticket.min_condition ?? config.default_min_condition) as Condition,
+    // Routed through normalizeCondition so that legacy TCGplayer codes ('LP', 'NM', etc.)
+    // stored in stale DB rows are silently mapped to canonical CardTrader names, and any
+    // truly unrecognised value is coerced to 'Near Mint' (with a console.warn) instead of
+    // throwing inside conditionRank() and killing the scan for this blueprint.
+    min_condition: (() => {
+      const raw = ticket.min_condition ?? config.default_min_condition;
+      const normalised = normalizeCondition(raw);
+      if (normalised !== raw) {
+        console.warn(
+          `[resolveEffective] min_condition "${raw}" is not a canonical Condition — ` +
+          `coerced to "${normalised}". Run migration 0007 to fix stored values.`,
+        );
+      }
+      return normalised;
+    })(),
 
     // foil_pref: §9a nullable override — NULL → inherit config.new_ticket_foil_pref.
     // Uses `??` so that any explicit FoilPref value is always honored.
@@ -41,9 +54,9 @@ export function resolveEffective(
     // allow_graded: NOT NULL 0/1 — convert to boolean.
     allow_graded: ticket.allow_graded === 1,
 
-    // threshold_pct: nullable override — NULL → inherit config default.
-    // Uses `??` so that an explicit 0 is honored (0 = "flag every listing").
-    threshold_pct: ticket.threshold_pct ?? config.default_threshold_pct,
+    // min_discount_pct: nullable override — NULL → inherit config default.
+    // Uses `??` so that an explicit 0 is honored (0 = "any copy at or below the median qualifies").
+    min_discount_pct: ticket.min_discount_pct ?? config.default_discount_pct,
 
     // cohort_size / min_cohort / min_price_cents / min_savings_cents:
     // config-only, no per-ticket override column.

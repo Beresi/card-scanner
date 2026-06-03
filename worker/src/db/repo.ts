@@ -160,7 +160,7 @@ export async function listActiveWatchlist(
               min_condition,
               foil_pref,
               allow_graded,
-              threshold_pct,
+              min_discount_pct,
               importance,
               telegram_enabled,
               telegram_min_discount_pct,
@@ -327,7 +327,7 @@ export async function markTelegramSent(
  * `id` and `updated_at` are managed by this helper and are excluded.
  */
 const CONFIG_PATCHABLE_COLS = new Set<string>([
-  'default_threshold_pct',
+  'default_discount_pct',
   'default_min_condition',
   'cohort_size',
   'min_cohort',
@@ -411,7 +411,7 @@ const WATCHLIST_PATCHABLE_COLS = new Set<string>([
   'min_condition',
   'foil_pref',
   'allow_graded',
-  'threshold_pct',
+  'min_discount_pct',
   'importance',
   'telegram_enabled',
   'telegram_min_discount_pct',
@@ -437,7 +437,7 @@ const WATCHLIST_PATCHABLE_COLS = new Set<string>([
  * - `allow_graded`: NOT NULL, no UI reset offered.
  */
 const WATCHLIST_RESETTABLE_COLS = new Set<string>([
-  'threshold_pct',
+  'min_discount_pct',
   'telegram_min_discount_pct',
   // §9a nullable overrides with config fallback (migration 0005)
   'detection_mode',
@@ -450,6 +450,25 @@ const WATCHLIST_RESETTABLE_COLS = new Set<string>([
 ]);
 
 /**
+ * Derived (non-stored) column for the watchlist read paths.
+ *
+ * A `type='card'` row watches a card by name across every printing and carries
+ * NO CardTrader blueprint id (`cardtrader_id` is NULL). To build a working
+ * "View on CardTrader" link we need *some* blueprint id for that name — any
+ * printing works, because the public `/cards/{id}/versions` page lists them all.
+ * We pick the most-recent printing in the local catalog (highest id) whose
+ * normalized name matches. For non-card rows `card_name_norm` is NULL, so the
+ * subquery matches nothing and yields NULL (harmless). Returns NULL too when the
+ * card's set hasn't been synced into the catalog yet — the client then falls
+ * back to a name search.
+ */
+const REPR_BLUEPRINT_ID_SUBQUERY = `(
+  SELECT b.id FROM blueprints b
+   WHERE b.name_norm = watchlist.card_name_norm
+   ORDER BY b.id DESC LIMIT 1
+) AS repr_blueprint_id`;
+
+/**
  * Read a single watchlist row by primary key.
  * Returns null if no row with that id exists.
  */
@@ -460,12 +479,13 @@ export async function getWatchlistById(
   return db
     .prepare(
       `SELECT id, type, cardtrader_id, label, game_id, min_condition,
-              foil_pref, allow_graded, threshold_pct, importance,
+              foil_pref, allow_graded, min_discount_pct, importance,
               telegram_enabled, telegram_min_discount_pct,
               telegram_max_price_cents, telegram_min_savings_cents,
               active, created_at, updated_at,
               detection_mode, max_price_cents,
-              card_name_norm, expansion_filter
+              card_name_norm, expansion_filter,
+              ${REPR_BLUEPRINT_ID_SUBQUERY}
          FROM watchlist
         WHERE id = ?`,
     )
@@ -483,12 +503,13 @@ export async function listWatchlist(db: D1Database): Promise<WatchlistRow[]> {
   const { results } = await db
     .prepare(
       `SELECT id, type, cardtrader_id, label, game_id, min_condition,
-              foil_pref, allow_graded, threshold_pct, importance,
+              foil_pref, allow_graded, min_discount_pct, importance,
               telegram_enabled, telegram_min_discount_pct,
               telegram_max_price_cents, telegram_min_savings_cents,
               active, created_at, updated_at,
               detection_mode, max_price_cents,
-              card_name_norm, expansion_filter
+              card_name_norm, expansion_filter,
+              ${REPR_BLUEPRINT_ID_SUBQUERY}
          FROM watchlist
         ORDER BY id ASC`,
     )
@@ -534,7 +555,7 @@ export async function insertWatchlist(
   if (row.active !== undefined)            { colVals.push(['active', row.active]); }
   // §9a nullable overrides — only bind when callers explicitly supply them
   // (routes should leave these absent so new items are born inheriting)
-  if (row.threshold_pct !== undefined)              { colVals.push(['threshold_pct', row.threshold_pct]); }
+  if (row.min_discount_pct !== undefined)              { colVals.push(['min_discount_pct', row.min_discount_pct]); }
   if (row.telegram_min_discount_pct !== undefined)  { colVals.push(['telegram_min_discount_pct', row.telegram_min_discount_pct]); }
   if (row.telegram_max_price_cents !== undefined)   { colVals.push(['telegram_max_price_cents', row.telegram_max_price_cents]); }
   if (row.telegram_min_savings_cents !== undefined) { colVals.push(['telegram_min_savings_cents', row.telegram_min_savings_cents]); }
@@ -625,8 +646,8 @@ export async function deleteWatchlist(
 /**
  * Null out a §9a override column to reset a watchlist item back to inheriting.
  *
- * Only `threshold_pct` and `telegram_min_discount_pct` may be reset — these are
- * the two columns that fall back to a `config` default (§9a).  Any other field
+ * Only resettable §9a override columns (those with a config fallback) may be reset.
+ * Any other field
  * name throws `Error('invalid_field')`, which the route maps to 400.
  *
  * Returns the updated row, or null if the id does not exist.
@@ -1215,7 +1236,9 @@ export async function selectBlueprintsToScanByIds(
  * blueprint catalog exported (i.e. `blueprints_synced_at IS NULL`).
  *
  * Only considers game_id = 1 (Magic: The Gathering).  Results are ordered by
- * `id ASC` for a stable, deterministic sync progression.
+ * `id DESC` (newest expansions first) so current/recent sets — the ones the
+ * owner is most likely to be watching and adding to the cart — get card data
+ * (images, set, stock) first. Older sets backfill afterward.
  *
  * Returns an empty array when all expansions are synced or the table is empty.
  */
@@ -1231,7 +1254,7 @@ export async function selectNextCatalogExpansions(
          FROM expansions
         WHERE game_id = 1
           AND blueprints_synced_at IS NULL
-        ORDER BY id
+        ORDER BY id DESC
         LIMIT ?`,
     )
     .bind(limit)
@@ -1284,4 +1307,321 @@ export async function countCatalogProgress(
     .first<{ total: number; synced: number }>();
 
   return { total: row?.total ?? 0, synced: row?.synced ?? 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Health telemetry — card-type blueprint count (Task 2 / scan_total fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * Count distinct blueprints that will be scanned for active card-type watchlist
+ * items, excluding any blueprint already owned by an active expansion item.
+ *
+ * This is the card-type contribution to `scan_total` on GET /api/health.
+ * Expansion-derived blueprints are excluded via `NOT IN (...)` so the two
+ * counts can be summed without double-counting.
+ *
+ * Algorithm (mirrors the scanner's resolveCardBlueprints logic):
+ *   1. For each active card-type row, resolve matching blueprints by name_norm
+ *      (+ optional expansion_filter JSON int array).
+ *   2. Collect blueprint ids into a Set (deduplication across card items).
+ *   3. Subtract ids that belong to active expansion items (already counted).
+ *
+ * Returns 0 immediately when there are no active card-type items or the
+ * blueprint catalog is empty for those names.
+ *
+ * NOTE: `excludeExpansionIds` is the list of expansion_ids owned by active
+ * expansion-type watchlist items (from `countActiveExpansionBlueprints`'s
+ * caller).  Blueprints whose `expansion_id` is in this set are already
+ * counted there, so we skip them here.
+ */
+export async function countActiveCardBlueprints(
+  db: D1Database,
+  cardItems: { card_name_norm: string | null; expansion_filter: string | null }[],
+  excludeExpansionIds: number[],
+): Promise<number> {
+  const activeCardItems = cardItems.filter((c) => c.card_name_norm !== null);
+  if (activeCardItems.length === 0) { return 0; }
+
+  const collectedIds = new Set<number>();
+
+  for (const item of activeCardItems) {
+    const nameNorm = item.card_name_norm as string;
+
+    // Parse the expansion_filter JSON int array (same logic as the scanner).
+    let filterIds: number[] | null = null;
+    if (item.expansion_filter !== null) {
+      try {
+        const parsed = JSON.parse(item.expansion_filter) as unknown;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          filterIds = parsed as number[];
+        }
+      } catch {
+        // Malformed JSON — treat as no filter (all sets).
+      }
+    }
+
+    let sql = `SELECT id, expansion_id FROM blueprints WHERE name_norm = ?`;
+    const binds: unknown[] = [nameNorm];
+
+    if (filterIds !== null && filterIds.length > 0) {
+      const placeholders = filterIds.map(() => '?').join(', ');
+      sql += ` AND expansion_id IN (${placeholders})`;
+      binds.push(...filterIds);
+    }
+
+    const { results } = await db
+      .prepare(sql)
+      .bind(...binds)
+      .all<{ id: number; expansion_id: number }>();
+
+    for (const row of results) {
+      // Skip blueprints already owned by an active expansion item.
+      if (excludeExpansionIds.length === 0 || !excludeExpansionIds.includes(row.expansion_id)) {
+        collectedIds.add(row.id);
+      }
+    }
+  }
+
+  return collectedIds.size;
+}
+
+/**
+ * Count the number of active watchlist rows (active = 1).
+ *
+ * Used by GET /api/health to distinguish "nothing watched (idle)" from
+ * "cache warming" (active items exist but no blueprints resolved yet).
+ */
+export async function countActiveWatchlist(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM watchlist WHERE active = 1`)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Cart enrichment (GET /api/cart)
+// ---------------------------------------------------------------------------
+
+/**
+ * Meta attached to each cart line item by the GET /api/cart route.
+ *
+ * source='deal'  — resolved via the deals table (product_id lookup).
+ * source='name'  — resolved via blueprints.name_norm fallback.
+ * Omitted entirely when neither lookup hits.
+ *
+ * `foil` mirrors deals.foil (0/1 integer, never a boolean on the wire).
+ * `available_quantity` is the listing stock captured at scan time (deals.quantity).
+ * `image_url` / `expansion_name` may be null when the DB row has no value.
+ *
+ * This interface is the single definition — cart.ts re-exports it to the route
+ * and the desktop DTO contract must match it exactly.
+ */
+export interface CartItemMeta {
+  source: 'deal' | 'name';
+  blueprint_id?: number;
+  image_url?: string | null;
+  expansion_name?: string | null;
+  condition?: string | null;
+  language?: string | null;
+  foil?: 0 | 1 | null;          // from deals.foil (integer — not converted to boolean)
+  available_quantity?: number | null;  // from deals.quantity (listing stock at scan time)
+}
+
+/**
+ * A single candidate printing for a name-sourced cart item. The same card name
+ * (name_norm) can have many printings (base set, collectors, promos, borderless,
+ * …), each a different blueprint_id. The route probes these against the live
+ * marketplace to discover which printing actually contains the cart's product.id.
+ */
+export interface CartCandidatePrinting {
+  blueprint_id: number;
+  image_url: string | null;
+  expansion_name: string | null;
+}
+
+/**
+ * Maximum candidate printings returned per name-sourced cart item. Bounds the
+ * marketplace-probe budget so one many-printing card can't dominate the cart's
+ * global lookup cap (see cart.ts MAX_CART_STOCK_LOOKUPS).
+ */
+export const MAX_CART_CANDIDATE_PRINTINGS = 6;
+
+/**
+ * Return shape of getCartEnrichment.
+ *  - `meta`: Map<productId, CartItemMeta> — best-guess display metadata so every
+ *    matched item shows SOMETHING (deal-sourced is authoritative; name-sourced
+ *    uses the first candidate printing as the best guess).
+ *  - `candidates`: Map<productId, CartCandidatePrinting[]> — ALL candidate
+ *    printings for each name-sourced item, capped, for the route to probe the
+ *    live marketplace and resolve the EXACT printing. Deal-sourced items have no
+ *    entry here (their data is authoritative — no probing needed).
+ */
+export interface CartEnrichmentResult {
+  meta: Map<number, CartItemMeta>;
+  candidates: Map<number, CartCandidatePrinting[]>;
+}
+
+/**
+ * Enrich a batch of cart line items with display metadata from D1.
+ *
+ * Algorithm (per item, in priority order):
+ *  1. PRIMARY — look up product.id in `deals` (UNIQUE key).  If found, return
+ *     source:'deal' with deal columns + image_url from blueprints.
+ *  2. FALLBACK — normalise product.name_en with `normalizeCardName` and gather
+ *     ALL candidate printings (`blueprints JOIN expansions WHERE name_norm IN`).
+ *     The FIRST candidate (id DESC → newest printing first) becomes the
+ *     source:'name' best-guess meta so the card still shows an image/set; the
+ *     full capped candidate list is returned separately for the route to probe
+ *     the live marketplace and resolve the EXACT printing.
+ *  3. Neither resolves → item absent from both Maps (no meta attached).
+ *
+ * Queries are batched (IN-lists), not issued N+1 per item.
+ * Best-effort: callers wrap this in try/catch; a DB error returns empty Maps
+ * so the cart still loads without meta.
+ *
+ * Returns a CartEnrichmentResult: { meta, candidates } both keyed by product.id.
+ */
+export async function getCartEnrichment(
+  db: D1Database,
+  items: { productId: number; nameEn: string }[],
+): Promise<CartEnrichmentResult> {
+  if (items.length === 0) { return { meta: new Map(), candidates: new Map() }; }
+
+  const result = new Map<number, CartItemMeta>();
+  const candidates = new Map<number, CartCandidatePrinting[]>();
+
+  // ── Step 1: batch-lookup all product_ids in `deals` ─────────────────────
+  const productIds = items.map((i) => i.productId);
+  const placeholders1 = productIds.map(() => '?').join(', ');
+  const { results: dealRows } = await db
+    .prepare(
+      `SELECT product_id, blueprint_id, expansion_name, condition, language, foil, quantity
+         FROM deals
+        WHERE product_id IN (${placeholders1})`,
+    )
+    .bind(...productIds)
+    .all<{
+      product_id: number;
+      blueprint_id: number;
+      expansion_name: string | null;
+      condition: string | null;
+      language: string | null;
+      foil: 0 | 1 | null;
+      quantity: number | null;
+    }>();
+
+  // Collect the blueprint_ids we need to fetch image_urls for (deal path).
+  const dealBlueprintIds = [...new Set(dealRows.map((d) => d.blueprint_id))];
+  const blueprintImageMap = new Map<number, string | null>();
+
+  if (dealBlueprintIds.length > 0) {
+    const placeholdersBp = dealBlueprintIds.map(() => '?').join(', ');
+    const { results: bpRows } = await db
+      .prepare(
+        `SELECT id, image_url FROM blueprints WHERE id IN (${placeholdersBp})`,
+      )
+      .bind(...dealBlueprintIds)
+      .all<{ id: number; image_url: string | null }>();
+
+    for (const row of bpRows) {
+      blueprintImageMap.set(row.id, row.image_url);
+    }
+  }
+
+  // Build a Set of product_ids that resolved via the deal path so the name
+  // fallback skips them.
+  const resolvedViaDeals = new Set<number>();
+
+  for (const deal of dealRows) {
+    resolvedViaDeals.add(deal.product_id);
+    result.set(deal.product_id, {
+      source: 'deal',
+      blueprint_id: deal.blueprint_id,
+      image_url: blueprintImageMap.get(deal.blueprint_id) ?? null,
+      expansion_name: deal.expansion_name,
+      condition: deal.condition,
+      language: deal.language,
+      foil: deal.foil,
+      available_quantity: deal.quantity,
+    });
+  }
+
+  // ── Step 2: name fallback for items not resolved via deals ───────────────
+  const unresolved = items.filter((i) => !resolvedViaDeals.has(i.productId));
+  if (unresolved.length === 0) { return { meta: result, candidates }; }
+
+  // Normalise each distinct name and deduplicate.
+  const normToProductIds = new Map<string, number[]>();
+  for (const item of unresolved) {
+    const norm = normalizeCardName(item.nameEn);
+    if (!norm) { continue; }
+    const existing = normToProductIds.get(norm);
+    if (existing) {
+      existing.push(item.productId);
+    } else {
+      normToProductIds.set(norm, [item.productId]);
+    }
+  }
+
+  if (normToProductIds.size === 0) { return { meta: result, candidates }; }
+
+  const distinctNorms = [...normToProductIds.keys()];
+  const placeholdersN = distinctNorms.map(() => '?').join(', ');
+
+  // One query for ALL distinct normalised names: retrieve every matching
+  // blueprint (a name can have many printings), newest printing first so the
+  // best-guess prefers recent reprints. We group by name_norm in JS and cap the
+  // candidate list per name; the distinct-norms list is small for a cart.
+  const { results: bpNameRows } = await db
+    .prepare(
+      `SELECT b.id AS blueprint_id, b.name_norm, b.image_url,
+              e.name AS expansion_name
+         FROM blueprints b
+         LEFT JOIN expansions e ON e.id = b.expansion_id
+        WHERE b.name_norm IN (${placeholdersN})
+        ORDER BY b.id DESC`,
+    )
+    .bind(...distinctNorms)
+    .all<{
+      blueprint_id: number;
+      name_norm: string;
+      image_url: string | null;
+      expansion_name: string | null;
+    }>();
+
+  // Build a Map<name_norm, capped candidate printings[]> (ordered id DESC).
+  const normToCandidates = new Map<string, CartCandidatePrinting[]>();
+  for (const row of bpNameRows) {
+    const list = normToCandidates.get(row.name_norm);
+    const candidate: CartCandidatePrinting = {
+      blueprint_id: row.blueprint_id,
+      image_url: row.image_url,
+      expansion_name: row.expansion_name,
+    };
+    if (list) {
+      if (list.length < MAX_CART_CANDIDATE_PRINTINGS) { list.push(candidate); }
+    } else {
+      normToCandidates.set(row.name_norm, [candidate]);
+    }
+  }
+
+  // Attach best-guess meta (first candidate) + the full candidate list to each
+  // unresolved product_id.
+  for (const [norm, productIdsForNorm] of normToProductIds.entries()) {
+    const list = normToCandidates.get(norm);
+    if (!list || list.length === 0) { continue; }
+    const best = list[0]!;
+    for (const pid of productIdsForNorm) {
+      result.set(pid, {
+        source: 'name',
+        blueprint_id: best.blueprint_id,
+        image_url: best.image_url,
+        expansion_name: best.expansion_name,
+      });
+      candidates.set(pid, list);
+    }
+  }
+
+  return { meta: result, candidates };
 }

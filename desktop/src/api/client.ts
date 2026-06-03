@@ -1,4 +1,4 @@
-import type { CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
+import type { Cart, CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
 
 // ---------------------------------------------------------------------------
 // Environment — base URL and dev token come from Vite env vars.
@@ -180,7 +180,7 @@ export function deleteWatchItem(id: number): Promise<void> {
 
 /**
  * PATCH /api/watchlist/:id/reset — null a single override field back to inherit.
- * Only 'threshold_pct' and 'telegram_min_discount_pct' are accepted; others → 400.
+ * Only 'min_discount_pct' and 'telegram_min_discount_pct' are accepted; others → 400.
  */
 export function resetWatchField(id: number, field: ResettableField): Promise<WatchItem> {
   return apiFetch<WatchItem>(`/api/watchlist/${id}/reset`, {
@@ -256,5 +256,30 @@ export function getCatalogProgress(): Promise<CatalogProgress> {
 export function runScanNow(): Promise<ScanNowResult> {
   return apiFetch<ScanNowResult>('/api/scan/run-now', {
     method: 'POST',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Cart
+// ---------------------------------------------------------------------------
+
+/** GET /api/cart — fetch the current CardTrader cart. */
+export function getCart(): Promise<Cart> {
+  return apiFetch<Cart>('/api/cart');
+}
+
+/** POST /api/cart/add — add quantity of a product to the cart. */
+export function cartAdd(productId: number, quantity: number): Promise<Cart> {
+  return apiFetch<Cart>('/api/cart/add', {
+    method: 'POST',
+    body: JSON.stringify({ product_id: productId, quantity }),
+  });
+}
+
+/** POST /api/cart/remove — remove quantity of a product from the cart. */
+export function cartRemove(productId: number, quantity: number): Promise<Cart> {
+  return apiFetch<Cart>('/api/cart/remove', {
+    method: 'POST',
+    body: JSON.stringify({ product_id: productId, quantity }),
   });
 }

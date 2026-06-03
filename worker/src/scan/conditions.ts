@@ -36,8 +36,60 @@ export const CONDITION_RANK: Record<Condition, number> = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Canonical condition set (exported for validation in route handlers)
+// ---------------------------------------------------------------------------
+
+/**
+ * All recognised CardTrader 7-grade condition names, in rank order (best → worst).
+ * Use this array to validate incoming strings before storing or passing to the engine.
+ */
+export const CONDITIONS: readonly Condition[] = [
+  'Mint',
+  'Near Mint',
+  'Slightly Played',
+  'Moderately Played',
+  'Played',
+  'Heavily Played',
+  'Poor',
+] as const;
+
+/**
+ * Legacy TCGplayer 5-grade codes → canonical CardTrader 7-grade names.
+ * Kept here as a defence-in-depth mapping; the DB migration converts stored
+ * rows so this should never be needed in production after migration 0007.
+ */
+const LEGACY_CODE_MAP: Record<string, Condition> = {
+  NM: 'Near Mint',
+  LP: 'Slightly Played',
+  MP: 'Moderately Played',
+  HP: 'Heavily Played',
+  D:  'Poor',
+};
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalise an arbitrary string to a Condition.
+ *
+ * - If it is already a canonical name → return it unchanged.
+ * - If it is a legacy TCGplayer code → map to the canonical name.
+ * - Otherwise → return 'Near Mint' (the safest default).
+ *
+ * This is a pure function — no I/O. The console.warn for unrecognised values
+ * lives in the caller (resolve.ts) so that this module stays side-effect free.
+ */
+export function normalizeCondition(s: string): Condition {
+  if ((CONDITION_RANK as Record<string, number>)[s] !== undefined) {
+    return s as Condition;
+  }
+  const mapped = LEGACY_CODE_MAP[s];
+  if (mapped !== undefined) {
+    return mapped;
+  }
+  return 'Near Mint';
+}
 
 /**
  * Return the rank for a condition.

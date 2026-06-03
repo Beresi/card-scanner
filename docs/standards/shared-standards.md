@@ -30,7 +30,8 @@ exactly. New tickets are born inheriting (override columns NULL) — do not copy
 - **Desktop secret** (the Cloudflare Access service token / shared bearer used to reach the
   API): OS-backed secure storage on-device — never in committed config or the JS bundle.
 - The CardTrader token has **read + write/purchase** scope → treat as high-sensitivity;
-  rotate if ever exposed. The app never calls any purchase endpoint.
+  rotate if ever exposed. The app calls cart add/view/remove (owner decision 2026-06-01)
+  but NEVER calls `/cart/purchase` or any checkout endpoint.
 - `.env*` and any local secret files are git-ignored.
 
 ## Time, timezones, scheduling

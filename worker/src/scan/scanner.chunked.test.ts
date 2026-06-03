@@ -227,6 +227,9 @@ describe('(B) Wholeset self-throttle', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
     const env = makeEnv(db);
     const summary = await runScan(env, { trigger: 'cron' }, {
@@ -247,6 +250,9 @@ describe('(B) Wholeset self-throttle', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
     const env = makeEnv(db);
     const summary = await runScan(env, { trigger: 'run-now' }, {
@@ -267,6 +273,9 @@ describe('(B) Wholeset self-throttle', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
     const env = makeEnv(db);
     const summary = await runScan(env, { trigger: 'cron' }, {
@@ -287,6 +296,9 @@ describe('(B) Wholeset self-throttle', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
     const env = makeEnv(db);
     const summary = await runScan(env, { trigger: 'cron' }, {
@@ -340,6 +352,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
     const env = makeEnv(db);
     await runScan(env, { trigger: 'cron' }, { createClient: (_t, _o) => client });
@@ -364,6 +379,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
         }),
         expansions: vi.fn().mockResolvedValue([]),
         blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
       };
     }
 
@@ -410,6 +428,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
       ),
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
 
     await runScan(makeEnv(db), { trigger: 'cron' }, { createClient: (_t, _o) => client });
@@ -435,6 +456,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
       ),
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
 
     const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
@@ -465,6 +489,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
 
     const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
@@ -497,6 +524,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: blueprintsExportSpy,
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
 
     await runScan(makeEnv(db), { trigger: 'cron' }, {
@@ -531,6 +561,9 @@ describe('(A) Chunked mode — rotation, budget, deal upsert', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
 
     const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
@@ -718,6 +751,9 @@ describe('(D) Scan cycle management — scanner integration', () => {
       ),
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
   }
 
@@ -817,6 +853,9 @@ describe('(D) Scan cycle management — scanner integration', () => {
       marketplaceProducts: marketplaceSpy,
       expansions: vi.fn().mockResolvedValue([]),
       blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
     await runScan(makeEnv(db), { trigger: 'run-now' }, {
       createClient: (_t, _o) => client,

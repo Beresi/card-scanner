@@ -13,8 +13,8 @@
  * select(null) in afterEach to prevent cross-test bleed.
  *
  * §9a contract under test:
- *   INHERITING item (id=101): threshold_pct=null → "inherit · 50%" + no reset button
- *   OVERRIDING item  (id=102): threshold_pct=55 → reset button present, no inherit text
+ *   INHERITING item (id=101): min_discount_pct=null → "inherit · 50%" + no reset button
+ *   OVERRIDING item  (id=102): min_discount_pct=45 → reset button present, no inherit text
  */
 
 import { act } from 'react';
@@ -76,8 +76,8 @@ beforeEach(() => {
   // Default: both items available; patchWatchItem returns the patched item
   mockGetWatchlist.mockResolvedValue([FIXTURE_WATCH_INHERITING, FIXTURE_WATCH_OVERRIDING]);
   mockGetConfig.mockResolvedValue(FIXTURE_CONFIG);
-  // patchWatchItem resolves with null-patched version (threshold_pct nulled)
-  mockPatchWatchItem.mockResolvedValue({ ...FIXTURE_WATCH_OVERRIDING, threshold_pct: null });
+  // patchWatchItem resolves with null-patched version (min_discount_pct nulled)
+  mockPatchWatchItem.mockResolvedValue({ ...FIXTURE_WATCH_OVERRIDING, min_discount_pct: null });
 });
 
 afterEach(() => {
@@ -103,7 +103,7 @@ describe('WatchInspector — §9a inherit / override', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('shows "inherit · 50%" for threshold when item.threshold_pct is null (id=101)', async () => {
+  it('shows "inherit · 50%" for min discount when item.min_discount_pct is null (id=101)', async () => {
     renderWithProviders(<WatchInspector />);
 
     // Select the inheriting item after render
@@ -114,13 +114,13 @@ describe('WatchInspector — §9a inherit / override', () => {
       expect(screen.getByText(/inherit · 50%/)).toBeInTheDocument();
     });
 
-    // No reset button for the Threshold field when inheriting
+    // No reset button for the Min discount field when inheriting
     expect(
-      screen.queryByRole('button', { name: /Reset Threshold to default/i }),
+      screen.queryByRole('button', { name: /Reset Min discount to default/i }),
     ).not.toBeInTheDocument();
   });
 
-  it('shows the reset button for threshold when item.threshold_pct is set (id=102)', async () => {
+  it('shows the reset button for min discount when item.min_discount_pct is set (id=102)', async () => {
     renderWithProviders(<WatchInspector />);
 
     act(() => { select(FIXTURE_WATCH_OVERRIDING.id); });
@@ -128,15 +128,15 @@ describe('WatchInspector — §9a inherit / override', () => {
     // The reset button appears when the field is overriding
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Reset Threshold to default/i }),
+        screen.getByRole('button', { name: /Reset Min discount to default/i }),
       ).toBeInTheDocument();
     });
 
-    // No inherit indicator for the Threshold field when overriding
+    // No inherit indicator for the Min discount field when overriding
     expect(screen.queryByText(/inherit · 50%/)).not.toBeInTheDocument();
   });
 
-  it('clicking the reset button calls patchWatchItem with threshold_pct: null', async () => {
+  it('clicking the reset button calls patchWatchItem with min_discount_pct: null', async () => {
     const user = userEvent.setup();
 
     renderWithProviders(<WatchInspector />);
@@ -144,35 +144,35 @@ describe('WatchInspector — §9a inherit / override', () => {
     act(() => { select(FIXTURE_WATCH_OVERRIDING.id); });
 
     const resetBtn = await screen.findByRole('button', {
-      name: /Reset Threshold to default/i,
+      name: /Reset Min discount to default/i,
     });
     await user.click(resetBtn);
 
-    // The mutation should have been invoked with {id, patch: {threshold_pct: null}}
+    // The mutation should have been invoked with {id, patch: {min_discount_pct: null}}
     await waitFor(() => {
       expect(mockPatchWatchItem).toHaveBeenCalledWith(
         FIXTURE_WATCH_OVERRIDING.id,
-        { threshold_pct: null },
+        { min_discount_pct: null },
       );
     });
   });
 
-  it('shows "inherit · NM" for min_condition when item.min_condition is null (id=102)', async () => {
+  it('shows "inherit · Near Mint" for min_condition when item.min_condition is null (id=102)', async () => {
     renderWithProviders(<WatchInspector />);
 
-    // OVERRIDING item has min_condition=null → should inherit NM from config
+    // OVERRIDING item has min_condition=null → should inherit Near Mint from config
     act(() => { select(FIXTURE_WATCH_OVERRIDING.id); });
 
     await waitFor(() => {
-      // config.default_min_condition = 'NM'
-      expect(screen.getByText(/inherit · NM/)).toBeInTheDocument();
+      // config.default_min_condition = 'Near Mint'
+      expect(screen.getByText(/inherit · Near Mint/)).toBeInTheDocument();
     });
   });
 
   it('shows the reset button for min_condition when it is overridden (id=101)', async () => {
     renderWithProviders(<WatchInspector />);
 
-    // INHERITING item has min_condition='NM' (explicit override)
+    // INHERITING item has min_condition='Near Mint' (explicit override)
     act(() => { select(FIXTURE_WATCH_INHERITING.id); });
 
     await waitFor(() => {

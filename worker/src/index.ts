@@ -7,11 +7,15 @@ import { configRouter } from './api/config';
 import { watchlistRouter } from './api/watchlist';
 import { dealsRouter } from './api/deals';
 import { resolveRouter } from './api/resolve';
+import { cartRouter } from './api/cart';
+import { catalogRouter } from './api/catalog';
 import {
   getLatestScanRun,
   getConfig,
   listActiveWatchlist,
   countActiveExpansionBlueprints,
+  countActiveCardBlueprints,
+  countActiveWatchlist,
   countScannedThisCycle,
 } from './db/repo';
 
@@ -95,28 +99,48 @@ app.get('/api/health', async (c) => {
     db_ok = false;
   }
 
+  // active_watch_count: number of watchlist rows where active = 1.
+  // Lets the desktop distinguish "nothing watched (idle)" from "caching sets…".
+  // Default to null so the field is absent-safe on DB error.
+  let active_watch_count: number | null = null;
+
   // Compute cycle progress — wrapped independently so an error here never affects
   // the existing scan_run fields or the ok/db_ok response structure.
   try {
     const config = await getConfig(c.env.DB);
     const watchlist = await listActiveWatchlist(c.env.DB);
+
+    // Split active watchlist by type.
     const activeExpansionIds = watchlist
       .filter((w) => w.type === 'expansion')
       .map((w) => w.cardtrader_id)
       .filter((id): id is number => id !== null);
 
+    const activeCardItems = watchlist
+      .filter((w) => w.type === 'card')
+      .map((w) => ({ card_name_norm: w.card_name_norm, expansion_filter: w.expansion_filter }));
+
     scan_mode = config.scan_mode;
-    scan_total = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
+
+    // scan_total = expansion-derived blueprints + card-derived blueprints (deduped,
+    // not double-counting expansion-owned blueprints).
+    const expansionTotal = await countActiveExpansionBlueprints(c.env.DB, activeExpansionIds);
+    const cardTotal = await countActiveCardBlueprints(c.env.DB, activeCardItems, activeExpansionIds);
+    scan_total = expansionTotal + cardTotal;
+
     scan_done = config.scan_cycle_started_at !== null
       ? await countScannedThisCycle(c.env.DB, activeExpansionIds, config.scan_cycle_started_at)
       : 0;
     // Clamp: scan_done must never exceed scan_total (e.g. if watchlist shrank mid-cycle).
     if (scan_done > scan_total) { scan_done = scan_total; }
+
+    active_watch_count = await countActiveWatchlist(c.env.DB);
   } catch {
     // Non-fatal — return safe defaults computed above; never 500.
     scan_mode = 'chunked';
     scan_total = 0;
     scan_done = 0;
+    active_watch_count = null;
   }
 
   return c.json({
@@ -133,6 +157,9 @@ app.get('/api/health', async (c) => {
     scan_mode,
     scan_total,
     scan_done,
+    // Number of watchlist rows where active=1, or null on DB error.
+    // Desktop usage: null/0 → "idle"; >0 but scan_total=0 → "caching sets…"; scan_total>0 → "X/Y".
+    active_watch_count,
   });
 });
 
@@ -154,6 +181,12 @@ app.route('/api/watchlist', watchlistRouter);
 app.route('/api/deals', dealsRouter);
 // GET /expansions?q= / GET /blueprints?expansion_id=&q=
 app.route('/api/resolve', resolveRouter);
+// GET /api/cart / POST /api/cart/add / POST /api/cart/remove
+// NO /api/cart/purchase — auto-buy is forbidden; the owner checks out manually.
+app.route('/api/cart', cartRouter);
+
+// POST /api/catalog/sync — on-demand blueprint backfill for specific expansions.
+app.route('/api/catalog', catalogRouter);
 
 // ── Catch-all 404 ─────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ error: 'not found' }, 404));

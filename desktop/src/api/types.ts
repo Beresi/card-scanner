@@ -9,7 +9,14 @@ export type DetectionMode = 'discount' | 'price';
 export type Theme = 'light' | 'dark' | 'system';
 export type Density = 'comfortable' | 'compact';
 export type Importance = 'low' | 'normal' | 'high';
-export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'D';
+export type Condition =
+  | 'Mint'
+  | 'Near Mint'
+  | 'Slightly Played'
+  | 'Moderately Played'
+  | 'Played'
+  | 'Heavily Played'
+  | 'Poor';
 export type FoilPref = 'any' | 'foil' | 'nonfoil';
 export type ThemePalette = 'cyan' | 'obsidian' | 'matrix' | 'synthwave';
 export type FontChoice = 'chakra' | 'orbitron' | 'rajdhani' | 'system';
@@ -60,7 +67,7 @@ export interface Deal {
 // ---------------------------------------------------------------------------
 export interface Config {
   // Scan / deal detection
-  default_threshold_pct: number;
+  default_discount_pct: number;
   default_min_condition: string;
   cohort_size: number;
   min_cohort: number;
@@ -120,7 +127,7 @@ export interface WatchItem {
   min_condition: string | null;
   foil_pref: FoilPref | null;
   allow_graded: DbBool | null;
-  threshold_pct: number | null;
+  min_discount_pct: number | null;
   importance: Importance | null;
   telegram_enabled: DbBool | null;
   telegram_min_discount_pct: number | null;
@@ -136,6 +143,10 @@ export interface WatchItem {
   card_name_norm: string | null;
   // JSON-serialised int[] of expansion_ids; NULL/empty = all sets
   expansion_filter: string | null;
+  // Derived server-side (not a stored column): a representative blueprint id for
+  // a card-type watch, matched from the catalog by card_name_norm. Used to build
+  // the /cards/{id}/versions link. NULL when the card's set isn't synced yet.
+  repr_blueprint_id?: number | null;
 
   active: DbBool;
   created_at: string;
@@ -160,6 +171,8 @@ export interface Health {
   scan_mode: ScanMode;
   scan_total: number;
   scan_done: number;
+  // Count of active watch items — optional so older workers stay compatible
+  active_watch_count?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +205,7 @@ type WatchItemOverrides = Partial<Pick<
   | 'min_condition'
   | 'foil_pref'
   | 'allow_graded'
-  | 'threshold_pct'
+  | 'min_discount_pct'
   | 'importance'
   | 'telegram_enabled'
   | 'telegram_min_discount_pct'
@@ -233,7 +246,7 @@ export type WatchItemPatch = Partial<Pick<
   | 'min_condition'
   | 'foil_pref'
   | 'allow_graded'
-  | 'threshold_pct'
+  | 'min_discount_pct'
   | 'importance'
   | 'telegram_enabled'
   | 'telegram_min_discount_pct'
@@ -250,7 +263,7 @@ export type WatchItemPatch = Partial<Pick<
 // ResettableField — columns that PATCH /api/watchlist/:id/reset accepts
 // ---------------------------------------------------------------------------
 export type ResettableField =
-  | 'threshold_pct'
+  | 'min_discount_pct'
   | 'telegram_min_discount_pct'
   | 'detection_mode'
   | 'max_price_cents';
@@ -305,4 +318,75 @@ export interface ScanNowResult {
   deals_found?: number;
   telegram_sent?: number;
   error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Cart — types mirrored from the worker contract
+// Money fields are integer cents; currency is an ISO 4217 string.
+// ---------------------------------------------------------------------------
+
+/** A monetary amount: integer cents + ISO 4217 currency string. */
+export interface Money {
+  cents: number;
+  currency: string;
+}
+
+/**
+ * Optional enrichment attached server-side to a cart item by joining against
+ * our deals / blueprints cache. Present when the worker recognises the product.
+ * Website-added items may have no meta — render defensively.
+ */
+export interface CartItemMeta {
+  source: 'deal' | 'name';
+  blueprint_id?: number;
+  image_url?: string | null;
+  expansion_name?: string | null;
+  condition?: string | null;
+  language?: string | null;
+  foil?: 0 | 1 | null;
+  available_quantity?: number | null;
+}
+
+/** One line item inside a subcart. */
+export interface CartItem {
+  quantity: number;
+  price_cents: number;
+  price_currency: string;
+  product: {
+    id: number;
+    name_en: string;
+  };
+  meta?: CartItemMeta;
+}
+
+/**
+ * One seller's sub-cart within the overall cart.
+ * The live CardTrader API carries NO money on subcarts — only seller + items.
+ * Derive a per-seller subtotal by summing line items at the display edge.
+ */
+export interface Subcart {
+  id: number;
+  seller: {
+    id: number;
+    username: string;
+  };
+  via_cardtrader_zero?: boolean;
+  cart_items: CartItem[];
+}
+
+/**
+ * The top-level cart returned by GET /api/cart.
+ * All money lives here (not on subcarts); every money field is optional —
+ * an empty cart omits them.
+ */
+export interface Cart {
+  id: number;
+  total?: Money;
+  subtotal?: Money;
+  shipping_cost?: Money;
+  safeguard_fee_amount?: Money;
+  ct_zero_fee_amount?: Money;
+  payment_method_fee_fixed_amount?: Money;
+  payment_method_fee_percentage_amount?: Money;
+  subcarts: Subcart[];
 }

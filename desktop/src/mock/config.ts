@@ -10,8 +10,8 @@ import { minutesAgo } from './utils';
 
 export const MOCK_CONFIG: Config = {
   // Scan / deal detection
-  default_threshold_pct: 50,
-  default_min_condition: 'NM',
+  default_discount_pct: 50,
+  default_min_condition: 'Near Mint',
   cohort_size: 10,
   min_cohort: 5,
   currency: 'USD',

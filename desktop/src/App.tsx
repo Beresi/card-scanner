@@ -30,6 +30,7 @@ import { Status } from './components/Status';
 import { ToastHost, useToasts } from './components/Toast';
 import { useEffects } from './effects/EffectsContext';
 import { useApplyAppearance } from './hooks/useApplyAppearance';
+import { Cart } from './views/cart/Cart';
 import { DealFeed } from './views/deal-feed/DealFeed';
 import { Health } from './views/health/Health';
 import { CommandPalette } from './views/palette/CommandPalette';
@@ -54,6 +55,7 @@ interface NavEntry {
 }
 
 const NAV: NavEntry[] = [
+  { key: 'cart',      label: 'Cart',       icon: 'cart'  },
   { key: 'feed',      label: 'Deal Feed',  icon: 'feed'  },
   { key: 'watchlist', label: 'Watchlist',  icon: 'watch' },
   { key: 'settings',  label: 'Settings',   icon: 'gear'  },
@@ -66,6 +68,7 @@ const TITLES: Record<ViewKey, [string, string]> = {
   watchlist: ['Watchlist', 'cards & sets under surveillance'],
   settings:  ['Settings', 'one config · the single source of truth'],
   health:    ['Health', 'scanner observability'],
+  cart:      ['Cart', 'your CardTrader cart'],
 };
 
 // ---------------------------------------------------------------------------
@@ -97,6 +100,8 @@ function ActiveView({ view, onReplayBoot, onClearDeals }: ActiveViewProps) {
       return <Settings onReplayBoot={onReplayBoot} onClearDeals={onClearDeals} />;
     case 'health':
       return <Health />;
+    case 'cart':
+      return <Cart />;
   }
 }
 

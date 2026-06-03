@@ -3,9 +3,9 @@
  *
  * All fixtures are built inline; no D1, no network, no file I/O.
  * Covers:
- *  1. Nullable override (threshold_pct) inherits config default when NULL.
- *  2. Explicit override (threshold_pct = 40) is sticky.
- *  3. threshold_pct = 0 is honored — proves `??` not `||` (0 is valid).
+ *  1. Nullable override (min_discount_pct) inherits config default when NULL.
+ *  2. Explicit override (min_discount_pct = 60) is sticky.
+ *  3. min_discount_pct = 100 is honored — proves `??` not `||` (0 is valid for the old field; 100 is now the "any listing qualifies" value).
  *  4. telegram_max_price_cents / telegram_min_savings_cents pass through as
  *     null (no config fallback).
  *  5. 0/1 boolean columns (allow_graded, telegram_enabled) convert to real
@@ -15,6 +15,8 @@
  *  8. importance NULL → inherits config.new_ticket_importance.
  *  9. telegram_enabled NULL → inherits config.new_ticket_telegram_enabled;
  *     explicit 0 is honored (proves `??` not `||`).
+ * 15. min_condition normalisation — legacy codes map to canonical names; unknown
+ *     values coerce to 'Near Mint' (no throw).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -28,7 +30,7 @@ import type { WatchlistRow, ConfigRow } from './types';
 /** Minimal valid ConfigRow with all deal-logic + telegram defaults. */
 const BASE_CONFIG: ConfigRow = {
   id: 1,
-  default_threshold_pct: 50,
+  default_discount_pct: 50,
   default_min_condition: 'Near Mint',
   cohort_size: 10,
   min_cohort: 5,
@@ -71,7 +73,7 @@ const INHERITING_TICKET: WatchlistRow = {
   min_condition: null,                    // §9a nullable override (migration 0006) — NULL
   foil_pref: null,                        // §9a nullable override (migration 0006) — NULL
   allow_graded: 0,
-  threshold_pct: null,                    // nullable override — NULL
+  min_discount_pct: null,                  // nullable override — NULL
   importance: null,                       // §9a nullable override (migration 0006) — NULL
   telegram_enabled: null,                 // §9a nullable override (migration 0006) — NULL
   telegram_min_discount_pct: null,        // nullable override — NULL
@@ -88,53 +90,53 @@ const INHERITING_TICKET: WatchlistRow = {
 };
 
 // ---------------------------------------------------------------------------
-// 1. Nullable threshold_pct NULL → inherits config.default_threshold_pct
+// 1. Nullable min_discount_pct NULL → inherits config.default_discount_pct
 // ---------------------------------------------------------------------------
 
-describe('resolveEffective — threshold_pct inheritance', () => {
-  it('inherits config.default_threshold_pct when ticket.threshold_pct is null', () => {
+describe('resolveEffective — min_discount_pct inheritance', () => {
+  it('inherits config.default_discount_pct when ticket.min_discount_pct is null', () => {
     const result = resolveEffective(INHERITING_TICKET, BASE_CONFIG);
-    expect(result.threshold_pct).toBe(50); // BASE_CONFIG.default_threshold_pct
+    expect(result.min_discount_pct).toBe(50); // BASE_CONFIG.default_discount_pct
   });
 
   it('reflects a later config change — moving baseline', () => {
-    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_threshold_pct: 55 };
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_discount_pct: 45 };
     const result = resolveEffective(INHERITING_TICKET, updatedConfig);
-    expect(result.threshold_pct).toBe(55);
+    expect(result.min_discount_pct).toBe(45);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Explicit threshold_pct = 40 is sticky regardless of config default
+// 2. Explicit min_discount_pct = 60 is sticky regardless of config default
 // ---------------------------------------------------------------------------
 
 describe('resolveEffective — explicit override is sticky', () => {
-  it('keeps ticket.threshold_pct = 40 even when config default is 50', () => {
-    const ticket: WatchlistRow = { ...INHERITING_TICKET, threshold_pct: 40 };
+  it('keeps ticket.min_discount_pct = 60 even when config default is 50', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_discount_pct: 60 };
     const result = resolveEffective(ticket, BASE_CONFIG); // config default = 50
-    expect(result.threshold_pct).toBe(40);
+    expect(result.min_discount_pct).toBe(60);
   });
 
-  it('keeps ticket.threshold_pct = 40 even when config default changes to 55', () => {
-    const ticket: WatchlistRow = { ...INHERITING_TICKET, threshold_pct: 40 };
-    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_threshold_pct: 55 };
+  it('keeps ticket.min_discount_pct = 60 even when config default changes to 45', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_discount_pct: 60 };
+    const updatedConfig: ConfigRow = { ...BASE_CONFIG, default_discount_pct: 45 };
     const result = resolveEffective(ticket, updatedConfig);
-    expect(result.threshold_pct).toBe(40);
+    expect(result.min_discount_pct).toBe(60);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 3. threshold_pct = 0 is honored — proves `??` not `||`
+// 3. min_discount_pct = 0 is honored — proves `??` not `||` (0 = any copy at or below median qualifies)
 // ---------------------------------------------------------------------------
 
 describe('resolveEffective — zero is a valid override (nullish coalescing)', () => {
-  it('honors threshold_pct = 0, does NOT fall back to config default', () => {
-    const ticket: WatchlistRow = { ...INHERITING_TICKET, threshold_pct: 0 };
+  it('honors min_discount_pct = 0, does NOT fall back to config default', () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_discount_pct: 0 };
     // If `||` were used instead of `??`, 0 would be treated as falsy and
-    // BASE_CONFIG.default_threshold_pct (50) would be returned instead.
+    // BASE_CONFIG.default_discount_pct (50) would be returned instead.
     const result = resolveEffective(ticket, BASE_CONFIG);
-    expect(result.threshold_pct).toBe(0);
-    expect(result.threshold_pct).not.toBe(50);
+    expect(result.min_discount_pct).toBe(0);
+    expect(result.min_discount_pct).not.toBe(50);
   });
 
   it('honors telegram_min_discount_pct = 0 — does NOT fall back to config', () => {
@@ -365,9 +367,9 @@ describe('resolveEffective — min_condition inheritance (migration 0006)', () =
   });
 
   it('explicit ticket min_condition is sticky — overrides config default', () => {
-    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'Good (Lightly Played)' };
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'Slightly Played' };
     const result = resolveEffective(ticket, BASE_CONFIG); // config default = 'Near Mint'
-    expect(result.min_condition).toBe('Good (Lightly Played)');
+    expect(result.min_condition).toBe('Slightly Played');
   });
 });
 
@@ -457,5 +459,66 @@ describe('resolveEffective — telegram_enabled inheritance (migration 0006)', (
     const result = resolveEffective(ticket, BASE_CONFIG);
     expect(result.telegram_enabled).toBe(true);
     expect(typeof result.telegram_enabled).toBe('boolean');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 15. min_condition normalisation — legacy codes and unknown values (Task 1b)
+// ---------------------------------------------------------------------------
+
+describe('resolveEffective — min_condition normalisation (migration 0007 defence)', () => {
+  it("legacy code 'LP' on ticket normalises to 'Slightly Played' (no throw)", () => {
+    // 'LP' is the TCGplayer code that was previously stored by the desktop.
+    // It must not reach conditionRank() as-is — resolveEffective normalises it first.
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'LP' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Slightly Played');
+  });
+
+  it("legacy code 'NM' on ticket normalises to 'Near Mint' (no throw)", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'NM' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Near Mint');
+  });
+
+  it("legacy code 'MP' on ticket normalises to 'Moderately Played' (no throw)", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'MP' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Moderately Played');
+  });
+
+  it("legacy code 'HP' on ticket normalises to 'Heavily Played' (no throw)", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'HP' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Heavily Played');
+  });
+
+  it("legacy code 'D' on ticket normalises to 'Poor' (no throw)", () => {
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'D' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Poor');
+  });
+
+  it("unknown string on ticket coerces to 'Near Mint' (no throw)", () => {
+    // An entirely unrecognised value (e.g. from a future client bug) must not
+    // throw and must not kill the scan — it falls back to the safest default.
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'GarbageValue' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Near Mint');
+  });
+
+  it("canonical value 'Slightly Played' on ticket is left unchanged", () => {
+    // Already-canonical values must pass through the normaliser unchanged.
+    const ticket: WatchlistRow = { ...INHERITING_TICKET, min_condition: 'Slightly Played' };
+    const result = resolveEffective(ticket, BASE_CONFIG);
+    expect(result.min_condition).toBe('Slightly Played');
+  });
+
+  it("legacy code 'LP' on config.default_min_condition normalises to 'Slightly Played'", () => {
+    // If the config row itself has a stale legacy code, it must also be normalised.
+    const legacyConfig: ConfigRow = { ...BASE_CONFIG, default_min_condition: 'LP' };
+    // Ticket inherits (null) — so the raw value comes from config.
+    const result = resolveEffective(INHERITING_TICKET, legacyConfig);
+    expect(result.min_condition).toBe('Slightly Played');
   });
 });

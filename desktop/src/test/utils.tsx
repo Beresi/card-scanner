@@ -52,8 +52,8 @@ export function renderWithProviders(
 
 /** Config fixture — all fields including theme_palette and font. Money is integer cents. */
 export const FIXTURE_CONFIG: Config = {
-  default_threshold_pct: 50,
-  default_min_condition: 'NM',
+  default_discount_pct: 50,
+  default_min_condition: 'Near Mint',
   cohort_size: 10,
   min_cohort: 5,
   currency: 'USD',
@@ -137,7 +137,7 @@ export const FIXTURE_DEALS: Deal[] = [
     expansion_name: 'Modern Horizons 2',
     seller_username: 'seller1',
     seller_country: 'DE',
-    condition: 'NM',
+    condition: 'Near Mint',
     language: 'en',
     foil: 0,
     can_sell_via_hub: 1,
@@ -164,7 +164,7 @@ export const FIXTURE_DEALS: Deal[] = [
     expansion_name: 'LotR: Tales of Middle-earth',
     seller_username: 'seller2',
     seller_country: 'US',
-    condition: 'NM',
+    condition: 'Near Mint',
     language: 'en',
     foil: 0,
     can_sell_via_hub: 0,
@@ -187,8 +187,8 @@ export const FIXTURE_DEALS: Deal[] = [
 /**
  * WatchItem fixtures used by the inspector §9a tests.
  *
- * INHERITING item (id=101): threshold_pct null → falls back to config default 50%.
- * OVERRIDING item  (id=102): threshold_pct=55 → shows reset affordance.
+ * INHERITING item (id=101): min_discount_pct null → falls back to config default 50%.
+ * OVERRIDING item  (id=102): min_discount_pct=45 → shows reset affordance.
  */
 export const FIXTURE_WATCH_INHERITING: WatchItem = {
   id: 101,
@@ -196,11 +196,11 @@ export const FIXTURE_WATCH_INHERITING: WatchItem = {
   cardtrader_id: 100701,
   label: 'The One Ring',
   game_id: 1,
-  // threshold_pct null → INHERITING (falls back to config.default_threshold_pct = 50)
-  min_condition: 'NM',       // overriding
+  // min_discount_pct null → INHERITING (falls back to config.default_discount_pct = 50)
+  min_condition: 'Near Mint',  // overriding
   foil_pref: null,
   allow_graded: 0,
-  threshold_pct: null,       // INHERITING
+  min_discount_pct: null,       // INHERITING
   importance: 'high',
   telegram_enabled: 1,
   telegram_min_discount_pct: null,
@@ -221,11 +221,11 @@ export const FIXTURE_WATCH_OVERRIDING: WatchItem = {
   cardtrader_id: 100501,
   label: 'Ragavan, Nimble Pilferer',
   game_id: 1,
-  // threshold_pct set → OVERRIDING (shows reset button)
+  // min_discount_pct set → OVERRIDING (shows reset button)
   min_condition: null,       // inheriting
   foil_pref: 'nonfoil',
   allow_graded: 0,
-  threshold_pct: 55,         // OVERRIDING
+  min_discount_pct: 45,         // OVERRIDING (100 - 55 = 45)
   importance: 'high',
   telegram_enabled: 1,
   telegram_min_discount_pct: null,

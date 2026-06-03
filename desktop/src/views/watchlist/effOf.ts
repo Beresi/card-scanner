@@ -6,7 +6,7 @@
  * matching Config default.
  *
  * Rules:
- *   - threshold_pct     → config.default_threshold_pct
+ *   - min_discount_pct  → config.default_discount_pct
  *   - min_condition     → config.default_min_condition
  *   - foil_pref         → config.new_ticket_foil_pref
  *   - importance        → config.new_ticket_importance
@@ -26,7 +26,7 @@ import { usd } from '../../lib/format';
 
 // Fields with a real config default — InheritField applies here
 export type InheritableField =
-  | 'threshold_pct'
+  | 'min_discount_pct'
   | 'min_condition'
   | 'foil_pref'
   | 'importance'
@@ -45,14 +45,14 @@ export interface EffResult<T> {
 }
 
 /**
- * Resolve effective threshold_pct for display.
+ * Resolve effective min_discount_pct for display.
  */
 export function effThreshold(item: WatchItem, config: Config): EffResult<number> {
-  const inherited = item.threshold_pct == null;
+  const inherited = item.min_discount_pct == null;
   return {
-    value: item.threshold_pct ?? config.default_threshold_pct,
+    value: item.min_discount_pct ?? config.default_discount_pct,
     inherited,
-    defaultLabel: `${config.default_threshold_pct}%`,
+    defaultLabel: `${config.default_discount_pct}%`,
   };
 }
 
@@ -130,7 +130,7 @@ export function effTelegramMinDiscount(item: WatchItem, config: Config): EffResu
 /**
  * Resolve effective detection_mode for display.
  *
- * 'discount' (the default) uses the existing threshold_pct / median-baseline logic.
+ * 'discount' (the default) uses the min_discount_pct / median-baseline logic.
  * 'price' flags any listing whose price_cents ≤ max_price_cents.
  */
 export function effDetectionMode(item: WatchItem, config: Config): EffResult<DetectionMode> {
@@ -147,7 +147,7 @@ export function effDetectionMode(item: WatchItem, config: Config): EffResult<Det
  * Resolve effective max_price_cents for display.
  *
  * NULL means "no price cap" — the item (and possibly the config default) have no
- * absolute ceiling, so detection falls back to threshold_pct in discount mode.
+ * absolute ceiling, so detection falls back to min_discount_pct in discount mode.
  * defaultLabel is either a formatted dollar amount or "none" when the config
  * default is also null.
  */

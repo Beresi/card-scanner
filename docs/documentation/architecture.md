@@ -83,7 +83,7 @@ health. Server state is cached/invalidated by TanStack Query; only ephemeral UI 
 ## External dependencies & secrets
 | Dependency | Auth | Notes |
 |---|---|---|
-| CardTrader API v2 | `Bearer CARDTRADER_API_TOKEN` | read+write scope; high-sensitivity; ~1 req/s |
+| CardTrader API v2 | `Bearer CARDTRADER_API_TOKEN` | read+write scope; high-sensitivity; ~1 req/s; cart add/view/remove used; /cart/purchase NEVER called |
 | Telegram Bot API | bot token + chat id | batched `sendMessage` |
 | Cloudflare D1 | Worker binding `DB` | only persistent state |
 | Worker `/api` (from desktop) | Access service token / shared bearer | on-device secure storage |

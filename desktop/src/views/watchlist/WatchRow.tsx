@@ -2,7 +2,7 @@
  * WatchRow — one dense table row in the watchlist.
  *
  * Columns (9-column grid from watchlist.css .wr):
- *   type icon | name+subtext | condition | foil | threshold | importance | telegram | [hits slot] | active switch
+ *   type icon | name+subtext | condition | foil | min discount | importance | telegram | [hits slot] | active switch
  *
  * Interaction:
  *   - Clicking the row calls select(item.id).
@@ -25,6 +25,9 @@ import { Switch } from '../../components/Switch';
 import { Tag } from '../../components/Tag';
 import { effDetectionMode, effImportance, effMinCondition, effThreshold } from './effOf';
 import { usd } from '../../lib/format';
+import { conditionShort } from '../../lib/conditions';
+import { openBuyUrl } from '../deal-feed/DealCard';
+import { buildWatchUrl } from '../../lib/cardtrader-url';
 
 export interface WatchRowProps {
   item: WatchItem;
@@ -34,19 +37,10 @@ export interface WatchRowProps {
   onSelect: (id: number) => void;
 }
 
-// Condition short labels shown in the table row
-const COND_SHORT: Record<string, string> = {
-  NM: 'NM',
-  LP: 'LP',
-  MP: 'MP',
-  HP: 'HP',
-  D:  'D',
-};
-
 // Minimal Config fallback used only while config is still loading.
 const CONFIG_FALLBACK: Config = {
-  default_threshold_pct: 50,
-  default_min_condition: 'NM',
+  default_discount_pct: 50,
+  default_min_condition: 'Near Mint',
   cohort_size: 4,
   min_cohort: 2,
   currency: 'USD',
@@ -121,7 +115,12 @@ export function WatchRow({
     patchItem.mutate({ id: item.id, patch: { active: item.active === 1 ? 0 : 1 } });
   }
 
-  const condShort = COND_SHORT[condEff.value] ?? condEff.value;
+  function handleOpenCardTrader(e: React.MouseEvent) {
+    e.stopPropagation();
+    void openBuyUrl(buildWatchUrl(item));
+  }
+
+  const condShort = conditionShort(condEff.value);
   const isHighImp = impEff.value === 'high';
   const hasTelegram = item.telegram_enabled === 1;
 
@@ -152,21 +151,32 @@ export function WatchRow({
         />
       </span>
 
-      {/* Name + subtext */}
+      {/* Name + subtext + external link */}
       <span className="wr-name" role="cell">
-        <span className="wr-label">{item.label}</span>
-        {item.type === 'card' ? (
-          <span className="wr-exp cb-mono" title="Watching all printings of this card">
-            any printing
-          </span>
-        ) : (
-          <span className="wr-exp cb-mono">#{item.cardtrader_id}</span>
-        )}
+        <span className="wr-name-text">
+          <span className="wr-label">{item.label}</span>
+          {item.type === 'card' ? (
+            <span className="wr-exp cb-mono" title="Watching all printings of this card">
+              any printing
+            </span>
+          ) : (
+            <span className="wr-exp cb-mono">#{item.cardtrader_id}</span>
+          )}
+        </span>
+        <button
+          type="button"
+          className="wr-ext-btn"
+          title="View on CardTrader"
+          aria-label="View on CardTrader"
+          onClick={handleOpenCardTrader}
+        >
+          <Icon name="ext" size={11} />
+        </button>
       </span>
 
       {/* Condition */}
       <span className="wr-c" role="cell">
-        <Tag tone={condEff.value === 'NM' ? 'good' : 'default'} title={condEff.inherited ? `inherit · ${condEff.defaultLabel}` : undefined}>
+        <Tag tone={condEff.value === 'Near Mint' || condEff.value === 'Mint' ? 'good' : 'default'} title={condEff.inherited ? `inherit · ${condEff.defaultLabel}` : undefined}>
           {condShort}+
         </Tag>
       </span>
@@ -176,7 +186,7 @@ export function WatchRow({
         {item.foil_pref ?? effectiveConfig.new_ticket_foil_pref}
       </span>
 
-      {/* Threshold / detection mode — dim if inherited */}
+      {/* Min discount / detection mode — dim if inherited */}
       <span
         className="wr-c wr-thr"
         role="cell"
@@ -199,7 +209,7 @@ export function WatchRow({
               : 'price'}
           </span>
         ) : (
-          <>&le;{thrEff.value}%</>
+          <>&ge;{thrEff.value}% off</>
         )}
       </span>
 

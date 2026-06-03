@@ -22,6 +22,8 @@ import type { Deal } from '../../api/types';
 vi.mock('../../api/client', () => ({
   getDeals: vi.fn(),
   patchDeal: vi.fn(),
+  cartAdd: vi.fn(),
+  cartRemove: vi.fn(),
   // ApiError is used by the view for instanceof checks — keep the real class.
   ApiError: class ApiError extends Error {
     status: number;
@@ -62,7 +64,7 @@ function makeDeal(overrides: Partial<Deal> = {}): Deal {
     expansion_name: 'Alpha',
     seller_username: 'seller1',
     seller_country: 'US',
-    condition: 'NM',
+    condition: 'Near Mint',
     language: 'en',
     foil: 0,
     can_sell_via_hub: 1,

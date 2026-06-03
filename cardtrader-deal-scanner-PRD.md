@@ -443,6 +443,9 @@ Make the scan callable from both the cron trigger and `POST /api/scan/run-now`.
 - The CardTrader token grants read **and write/purchase** scope on the account — treat as high-sensitivity. **Rotate the token if it is ever exposed.**
 - Dashboard behind **Cloudflare Access** (one identity). No public routes that read/write D1.
 - Do not implement any cart/purchase endpoint. Deals link out; the human buys.
+  *(Owner override 2026-06-01: `GET /cart`, `POST /cart/add`, and `POST /cart/remove` are
+  implemented so the desktop can display and manage the live cart. `/cart/purchase` and any
+  checkout endpoint remain unconditionally prohibited.)*
 
 ---
 

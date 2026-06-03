@@ -388,6 +388,16 @@ const MAX_CACHE_WARMUPS_PER_RUN = 2;
 const CHUNKED_RUN_BUDGET_MS = 20_000;
 
 /**
+ * Per-run wall-clock budget for the Step-0 catalog backfill (ms). Catalog sync
+ * runs BEFORE the rotation loop and shares the cron's tight execution limit, so
+ * it must stop cleanly to leave room for the deal scan. Each export commits
+ * independently (markExpansionCatalogSynced), so stopping early just resumes the
+ * remaining sets next run — this lets catalog_max_exports_per_run be set high
+ * for a fast backfill without risking a killed cron run.
+ */
+const CATALOG_SYNC_BUDGET_MS = 12_000;
+
+/**
  * Persist rotation progress every N blueprints (not once at the end). If a run
  * is still killed mid-batch, the cursor has already advanced for what it did —
  * so the same cards are never retried forever (no permanent stall).
@@ -433,7 +443,11 @@ async function runChunked(
   if (config.catalog_sync_enabled === 1 && config.catalog_max_exports_per_run > 0) {
     try {
       const toSync = await selectNextCatalogExpansions(db, config.catalog_max_exports_per_run);
+      const catalogStartMs = Date.now();
       for (const expId of toSync) {
+        // Stop cleanly once the catalog budget is spent so the deal scan still
+        // gets its rotation budget — remaining sets resume next run.
+        if (Date.now() - catalogStartMs >= CATALOG_SYNC_BUDGET_MS) { break; }
         try {
           const blueprints = await client.blueprintsExport(expId);
           await syncBlueprints(
@@ -839,7 +853,7 @@ async function evaluateAndUpsert(
     cohort_size: result.cohortSize,
     discount_pct: result.discountPct,        // integer percent
     priority: eff.importance,
-    buy_url: buildBuyUrl(blueprintId),
+    buy_url: buildBuyUrl(blueprintId, candidate.name_en, candidate.expansion?.name_en ?? null),
   };
 
   const isNew = await upsertDeal(db, deal);

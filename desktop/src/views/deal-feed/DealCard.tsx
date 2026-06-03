@@ -15,22 +15,37 @@ import { PriceBar } from '../../components/PriceBar';
 import { Tag } from '../../components/Tag';
 import type { Deal } from '../../api/types';
 import { ago, flag, pct, savings, usd } from '../../lib/format';
+import { conditionShort } from '../../lib/conditions';
 
 export interface DealCardProps {
   deal: Deal;
   onSeen: (id: number) => void;
   onDismiss: (id: number) => void;
   onBuy: (deal: Deal) => void;
+  onAddToCart?: (deal: Deal) => void;
   busy?: boolean;
+  cartBusy?: boolean;
 }
 
-// Map card condition to a Tag tone — NM/LP are "good", degraded conditions default.
+// Map card condition to a Tag tone — Mint/Near Mint/Slightly Played are "good".
 function conditionTone(condition: string | null): 'good' | 'default' {
-  if (condition === 'NM' || condition === 'LP') return 'good';
+  if (
+    condition === 'Mint' ||
+    condition === 'Near Mint' ||
+    condition === 'Slightly Played'
+  ) return 'good';
   return 'default';
 }
 
-export function DealCard({ deal, onSeen, onDismiss, onBuy, busy = false }: DealCardProps) {
+export function DealCard({
+  deal,
+  onSeen,
+  onDismiss,
+  onBuy,
+  onAddToCart,
+  busy = false,
+  cartBusy = false,
+}: DealCardProps) {
   const isHigh = deal.priority === 'high';
   const isSeen = deal.seen === 1;
 
@@ -80,8 +95,8 @@ export function DealCard({ deal, onSeen, onDismiss, onBuy, busy = false }: DealC
 
       {/* Meta tags: condition, foil, language, quantity */}
       <div className="deal-meta">
-        <Tag tone={conditionTone(deal.condition)} title="Condition">
-          {deal.condition ?? '?'}
+        <Tag tone={conditionTone(deal.condition)} title={deal.condition ?? 'Unknown condition'}>
+          {conditionShort(deal.condition)}
         </Tag>
         {deal.foil !== null && (
           <Tag tone={deal.foil === 1 ? 'accent' : 'default'} title="Foil">
@@ -115,6 +130,18 @@ export function DealCard({ deal, onSeen, onDismiss, onBuy, busy = false }: DealC
             <Icon name="buy" size={14} />
             Buy
           </Btn>
+          {onAddToCart && (
+            <Btn
+              variant="ghost"
+              onClick={() => onAddToCart(deal)}
+              disabled={cartBusy}
+              title="Add to CardTrader cart"
+              aria-label={`Add ${deal.card_name} to cart`}
+            >
+              <Icon name="cart" size={14} />
+              Cart
+            </Btn>
+          )}
           <Btn
             variant="ghost"
             onClick={() => onSeen(deal.id)}
