@@ -335,13 +335,19 @@ export async function revalidateBlueprintDeals(
       ).bind(blueprintId),
     );
   } else {
-    const placeholders = presentProductIds.map(() => '?').join(', ');
+    // Bind the present-id set as a single JSON array expanded via json_each()
+    // rather than one bound parameter per id. D1 caps bound variables per
+    // statement (~100), so a popular card with many live listings would
+    // otherwise throw "too many SQL variables". A NOT IN can't be chunked the
+    // way markBlueprintsScanned chunks its IN (splitting the set across
+    // statements would sold-retire listings that live in the OTHER chunk), so
+    // json_each — one parameter regardless of listing count — is the fix.
     stmts.push(
       db.prepare(
         `UPDATE deals SET status='sold', retired_at=datetime('now')
           WHERE blueprint_id=? AND status='open' AND dismissed=0
-            AND product_id NOT IN (${placeholders})`,
-      ).bind(blueprintId, ...presentProductIds),
+            AND product_id NOT IN (SELECT value FROM json_each(?))`,
+      ).bind(blueprintId, JSON.stringify(presentProductIds)),
     );
   }
 
@@ -1315,18 +1321,22 @@ export async function selectBlueprintsToScanByIds(
 ): Promise<{ id: number; expansion_id: number }[]> {
   if (ids.length === 0 || limit <= 0) { return []; }
 
-  const placeholders = ids.map(() => '?').join(', ');
+  // Expand the id set via json_each() (single bound parameter) instead of one
+  // placeholder per id. A card name can resolve to thousands of printings
+  // (MAX_CARD_BLUEPRINTS_PER_ITEM × many card items), which would blow D1's
+  // ~100 bound-variable cap. Chunking is not an option here — the ORDER BY +
+  // LIMIT must see the whole candidate set to pick the correct rotation slice.
   const { results } = await db
     .prepare(
       `SELECT id, expansion_id
          FROM blueprints
-        WHERE id IN (${placeholders})
+        WHERE id IN (SELECT value FROM json_each(?))
         ORDER BY (last_scanned_at IS NULL) DESC,
                  last_scanned_at ASC,
                  id ASC
         LIMIT ?`,
     )
-    .bind(...ids, limit)
+    .bind(JSON.stringify(ids), limit)
     .all<{ id: number; expansion_id: number }>();
 
   return results;

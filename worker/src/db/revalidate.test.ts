@@ -131,6 +131,23 @@ describe('revalidateBlueprintDeals — lifecycle transitions', () => {
     expect((await getDealById(db, dealIdFor(111)))!.status).toBe('sold');
     expect((await getDealById(db, dealIdFor(777)))!.status).toBe('open'); // untouched
   });
+
+  it('handles a present-listing set larger than D1’s bound-variable cap', async () => {
+    // A popular card can have hundreds of live listings. The present-id set is
+    // bound as a single JSON array (json_each) rather than one variable per id,
+    // so a large set must NOT throw "too many SQL variables" (the prod bug this
+    // guards against fired on the NOT IN (?, ?, …) form at ~100 ids).
+    const present = Array.from({ length: 250 }, (_, i) => 1000 + i); // 250 ids
+    seedOpenDeal(1000, 180);   // present AND the candidate → stays open
+    seedOpenDeal(1500, 190);   // absent from the 250-id set    → sold
+
+    await expect(
+      revalidateBlueprintDeals(db, BP, present, 1000),
+    ).resolves.toBeUndefined();
+
+    expect((await getDealById(db, dealIdFor(1000)))!.status).toBe('open');
+    expect((await getDealById(db, dealIdFor(1500)))!.status).toBe('sold');
+  });
 });
 
 // ---------------------------------------------------------------------------

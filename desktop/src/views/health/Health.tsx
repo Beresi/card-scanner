@@ -77,20 +77,26 @@ interface StatTiles {
   totalDeals:   number;
   totalTg:      number;
   errorCount:   number;
+  /** Runs that opened but never finished (excludes the newest, which may still be scanning). */
+  failedCount:  number;
 }
 
 function computeStats(runs: ScanRun[]): StatTiles {
-  let totalDeals = 0;
-  let totalTg    = 0;
-  let errorCount = 0;
+  let totalDeals  = 0;
+  let totalTg     = 0;
+  let errorCount  = 0;
+  let failedCount = 0;
 
-  for (const r of runs) {
+  // `runs` is newest-first. A row with no finish timestamp never completed; the
+  // newest one (index 0) may still be in progress, so it is not counted failed.
+  runs.forEach((r, i) => {
     totalDeals += r.deals_found;
     totalTg    += r.telegram_sent;
     if (r.error !== null) errorCount += 1;
-  }
+    if (r.finished_at === null && i > 0) failedCount += 1;
+  });
 
-  return { totalDeals, totalTg, errorCount };
+  return { totalDeals, totalTg, errorCount, failedCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -118,13 +124,24 @@ function tokenStatus(runs: ScanRun[]): { label: string; tileClass: string } {
 
 interface LogRowProps {
   run:        ScanRun;
+  /** True for the newest row — it may legitimately still be scanning. */
+  isLatest:   boolean;
   expanded:   boolean;
   onToggle:   () => void;
 }
 
-function LogRow({ run, expanded, onToggle }: LogRowProps) {
+function LogRow({ run, isLatest, expanded, onToggle }: LogRowProps) {
   const hasError   = run.error !== null;
-  const rowClass   = ['hlog-row', hasError ? 'hlog-err' : undefined]
+
+  // A run with no finish timestamp never closed its scan_runs row. If a NEWER
+  // run already exists (this isn't the latest), it definitively stalled or was
+  // killed mid-scan — surface that as FAILED instead of the old, misleading OK.
+  // The latest unfinished row may still be in progress, so it shows RUNNING.
+  const incomplete = run.finished_at === null;
+  const failed     = incomplete && !isLatest;
+  const running    = incomplete && isLatest;
+
+  const rowClass   = ['hlog-row', (hasError || failed) ? 'hlog-err' : undefined]
     .filter(Boolean)
     .join(' ');
 
@@ -171,10 +188,15 @@ function LogRow({ run, expanded, onToggle }: LogRowProps) {
         </span>
 
         <span>
-          {hasError
-            ? <Tag tone="warn">WARN</Tag>
-            : <Tag tone="good">OK</Tag>
-          }
+          {hasError ? (
+            <Tag tone="warn">WARN</Tag>
+          ) : failed ? (
+            <Tag tone="hot">FAILED</Tag>
+          ) : running ? (
+            <Tag tone="accent">RUNNING</Tag>
+          ) : (
+            <Tag tone="good">OK</Tag>
+          )}
         </span>
       </div>
 
@@ -242,13 +264,21 @@ export function Health() {
   // Newest first — the API already returns newest-first but sort defensively.
   const sortedRuns = [...(rawRuns ?? [])].sort((a, b) => b.id - a.id);
 
-  const { totalDeals, totalTg, errorCount } = computeStats(sortedRuns);
+  const { totalDeals, totalTg, errorCount, failedCount } = computeStats(sortedRuns);
   const { label: tokenLabel, tileClass: tokenTileClass } = tokenStatus(sortedRuns);
 
-  // Derive scanner state from health fields.
-  const scannerOnline = health?.ok === true && health?.db_ok === true;
+  // Derive scanner state from health fields AND scan-run completion. A scanner
+  // whose API + DB are up but whose runs keep stalling (opening a scan_runs row
+  // then never finishing) is NOT healthy — surface that instead of a misleading
+  // "all systems nominal".
+  const apiDbOnline   = health?.ok === true && health?.db_ok === true;
+  const scannerOnline = apiDbOnline && failedCount === 0;
   const bannerLabel   = scannerOnline ? 'SCANNER ONLINE' : 'SCANNER DEGRADED';
-  const bannerSub     = scannerOnline ? 'all systems nominal' : 'check API + DB status';
+  const bannerSub     = scannerOnline
+    ? 'all systems nominal'
+    : !apiDbOnline
+      ? 'check API + DB status'
+      : `${failedCount} scan${failedCount === 1 ? '' : 's'} stalled — opened but never finished`;
 
   // Next hourly cron tick: top of the next whole hour from now.
   const nextScanTarget = Math.ceil(Date.now() / 3_600_000) * 3_600_000;
@@ -346,13 +376,13 @@ export function Health() {
           <span className="cb-eyebrow">pushed · last {sortedRuns.length} runs</span>
         </div>
 
-        {/* Errors in window */}
+        {/* Errors + stalled runs in window */}
         <div
-          className={`health-tile cb-chamfer-sm ${errorCount > 0 ? 'health-tile-warn' : 'health-tile-good'}`}
+          className={`health-tile cb-chamfer-sm ${errorCount + failedCount > 0 ? 'health-tile-warn' : 'health-tile-good'}`}
           role="listitem"
         >
-          <span className="health-tile-v cb-mono">{errorCount}</span>
-          <span className="cb-eyebrow">errors · in window</span>
+          <span className="health-tile-v cb-mono">{errorCount + failedCount}</span>
+          <span className="cb-eyebrow">errors/stalls · in window</span>
         </div>
 
       </div>
@@ -395,10 +425,11 @@ export function Health() {
               </span>
             </div>
           ) : (
-            sortedRuns.map((run) => (
+            sortedRuns.map((run, i) => (
               <LogRow
                 key={run.id}
                 run={run}
+                isLatest={i === 0}
                 expanded={expandedIds.has(run.id)}
                 onToggle={() => toggleExpanded(run.id)}
               />
