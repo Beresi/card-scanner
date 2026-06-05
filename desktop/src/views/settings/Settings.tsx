@@ -26,7 +26,7 @@ import { Select }    from '../../components/Select';
 import { Slider }    from '../../components/Slider';
 import { Status }    from '../../components/Status';
 import { Switch }    from '../../components/Switch';
-import { useCatalogProgress, useConfig, useConfigMutation, useLocalScanStatus } from '../../api/hooks';
+import { useCatalogProgress, useConfig, useConfigMutation, useLocalScanStatus, useRunLocalCatalogResync } from '../../api/hooks';
 import { CONDITION_OPTIONS } from '../../lib/conditions';
 import type {
   Condition,
@@ -340,6 +340,9 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
 
   // Local scan status — read-only; credentials live in worker/.dev.vars.local.
   const { data: localScanStatus } = useLocalScanStatus();
+
+  // Local catalog re-sync (full heal) — fires the device-local sidecar, not the cron.
+  const resyncCatalog = useRunLocalCatalogResync();
 
   // Active tab — ephemeral UI state only.
   const [tab, setTab] = useState<SettingsTab>('appearance');
@@ -777,17 +780,43 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                     : 'Not configured'}
                 </span>
               </Row>
-              <Row label="" hint="">
-                <span className="cb-mono" style={{ fontSize: 11, color: 'var(--text-faint)', maxWidth: 380, lineHeight: 1.5 }}>
-                  Local scan reads credentials from{' '}
-                  <span style={{ color: 'var(--text-dim)' }}>worker/.dev.vars.local</span>{' '}
-                  (reuses your .dev.vars). Add CF_API_TOKEN there; CardTrader + Telegram tokens are reused.
-                  See <span style={{ color: 'var(--text-dim)' }}>docs/documentation/local-scan.md</span>.
-                </span>
-              </Row>
             </Panel>
 
             <Panel title="Maintenance" className="set-panel">
+              <Row
+                label="Resync catalog"
+                hint="Full re-pull of every set's cards on THIS device (local worker, not the cron). Un-freezes sets imported while sparse. Runs ~10+ min in the background."
+              >
+                <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <Btn
+                    variant="ghost"
+                    disabled={!lsConfigured || resyncCatalog.isPending}
+                    onClick={() => resyncCatalog.mutate()}
+                  >
+                    <Icon name="bolt" size={13} />
+                    {resyncCatalog.isPending ? 'Starting…' : 'Resync now'}
+                  </Btn>
+                  {!lsConfigured && (
+                    <span className="cb-mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                      Local scan not configured on this device.
+                    </span>
+                  )}
+                  {resyncCatalog.isSuccess && (
+                    <span className="cb-mono" style={{ fontSize: 11, color: 'var(--good)' }} role="status">
+                      Started ✓{' '}
+                      {resyncCatalog.data?.totalSets != null
+                        ? `re-pulling ${resyncCatalog.data.totalSets} sets in the background.`
+                        : 'running in the background.'}
+                    </span>
+                  )}
+                  {resyncCatalog.isError && (
+                    <span className="cb-mono" style={{ fontSize: 11, color: 'var(--hot)', maxWidth: 320 }} role="alert">
+                      {resyncCatalog.error?.message ?? 'Failed to start catalog re-sync.'}
+                    </span>
+                  )}
+                </span>
+              </Row>
+
               <Row label="Replay boot sequence" hint="re-runs the startup animation">
                 <Btn
                   variant="ghost"

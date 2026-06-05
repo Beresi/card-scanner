@@ -512,6 +512,24 @@ const CHUNKED_RUN_BUDGET_MS = 20_000;
 const CATALOG_SYNC_BUDGET_MS = 12_000;
 
 /**
+ * Re-export a NEW set's blueprint catalog once it is older than this many days,
+ * so freshly-released sets (often imported while CardTrader only lists a handful
+ * of their cards) self-heal as more singles are listed. Matches the 7-day
+ * cadence of the expansions-list refresh in the resolve route.
+ */
+const CATALOG_REFRESH_DAYS = 7;
+
+/**
+ * How many of the newest sets (by id — CardTrader assigns ids in release order)
+ * the periodic re-export considers "new" and worth re-checking. Older sets were
+ * fully listed when imported and are left frozen; a set ages out of this window
+ * as newer releases arrive. ~150 covers well over a year of releases (main +
+ * commander + Universes Beyond + collector/promo variants). A full re-pull of
+ * EVERY set is a deliberate local operation: `npm run catalog:resync`.
+ */
+const CATALOG_REFRESH_NEW_SET_COUNT = 150;
+
+/**
  * Persist rotation progress every N blueprints (not once at the end). If a run
  * is still killed mid-batch, the cursor has already advanced for what it did —
  * so the same cards are never retried forever (no permanent stall).
@@ -556,7 +574,12 @@ async function runChunked(
   // api_calls is incremented automatically.
   if (config.catalog_sync_enabled === 1 && config.catalog_max_exports_per_run > 0) {
     try {
-      const toSync = await selectNextCatalogExpansions(db, config.catalog_max_exports_per_run);
+      const toSync = await selectNextCatalogExpansions(
+        db,
+        config.catalog_max_exports_per_run,
+        CATALOG_REFRESH_DAYS,
+        CATALOG_REFRESH_NEW_SET_COUNT,
+      );
       const catalogStartMs = Date.now();
       for (const expId of toSync) {
         // Stop cleanly once the catalog budget is spent so the deal scan still

@@ -24,8 +24,9 @@ import {
 import {
   getLocalScanStatus,
   runLocalScan,
+  runLocalCatalogResync,
 } from './localScan';
-import type { LocalScanStatus } from './localScan';
+import type { CatalogResyncResult, LocalScanStatus } from './localScan';
 import type { Cart, CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
 
 // ---------------------------------------------------------------------------
@@ -442,6 +443,26 @@ export function useRunLocalScan() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['scanRuns'] });
       void qc.invalidateQueries({ queryKey: ['health'] });
+    },
+  });
+}
+
+/**
+ * useRunLocalCatalogResync — fires the local sidecar in catalog-resync mode
+ * (detached) for a full-heal blueprint re-pull, bypassing the cron's "new sets
+ * only" refresh window.
+ *
+ * Returns once the sidecar emits its "started" event; the re-pull continues for
+ * ~13 minutes. Invalidates ['catalogProgress'] and the ['resolve'] caches so
+ * the add-card search picks up newly-pulled cards as they land.
+ */
+export function useRunLocalCatalogResync() {
+  const qc = useQueryClient();
+  return useMutation<CatalogResyncResult, Error, void>({
+    mutationFn: () => runLocalCatalogResync(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['catalogProgress'] });
+      void qc.invalidateQueries({ queryKey: ['resolve'] });
     },
   });
 }

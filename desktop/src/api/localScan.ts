@@ -63,6 +63,12 @@ export interface LocalScanResult {
   runId: number | null;
 }
 
+/** Result from run_local_catalog_resync / runLocalCatalogResync(). */
+export interface CatalogResyncResult {
+  started: boolean;
+  totalSets: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // getLocalScanStatus
 // ---------------------------------------------------------------------------
@@ -117,6 +123,36 @@ export async function runLocalScan(): Promise<LocalScanResult> {
         : err instanceof Error
         ? err.message
         : 'Local scan failed to start.';
+    throw new Error(msg);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// runLocalCatalogResync
+// ---------------------------------------------------------------------------
+
+/**
+ * Fires the local sidecar in catalog-resync mode (detached) — a full-heal
+ * re-pull of every set's blueprints into the shared D1, bypassing the cron's
+ * "new sets only" refresh window.
+ *
+ * Returns once the sidecar emits its "started" event (with the set count); the
+ * re-pull continues for ~13 minutes afterward. Search results update live as
+ * sets are re-pulled. Same credentials and failure modes as runLocalScan().
+ */
+export async function runLocalCatalogResync(): Promise<CatalogResyncResult> {
+  if (!isTauriAvailable()) { throw new Error(NOT_DESKTOP_MSG); }
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const result = await invoke<CatalogResyncResult>('run_local_catalog_resync');
+    return result;
+  } catch (err) {
+    const msg =
+      typeof err === 'string'
+        ? err
+        : err instanceof Error
+        ? err.message
+        : 'Catalog re-sync failed to start.';
     throw new Error(msg);
   }
 }

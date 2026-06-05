@@ -7,6 +7,9 @@
 //   - run_local_scan        : spawns the bundled scan-local sidecar; passes the vars-file
 //                             path via CARD_BROKER_VARS_FILE env; returns { started, run_id }
 //                             without blocking on completion
+//   - run_local_catalog_resync : spawns the same sidecar with CARD_BROKER_TASK=catalog-resync
+//                             for a full-heal blueprint re-pull; returns { started, total_sets }
+//                             without blocking on completion
 //
 // Credentials come from worker/.dev.vars.local (or .dev.vars) — not the OS keychain.
 // Business logic (scanning, deal detection) lives in the Cloudflare Worker — never here.
@@ -36,6 +39,7 @@ pub fn run() {
             commands::get_local_scan_status,
             commands::local_scan_available,
             commands::run_local_scan,
+            commands::run_local_catalog_resync,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

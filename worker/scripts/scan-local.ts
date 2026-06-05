@@ -57,6 +57,7 @@
 import { loadEnv } from './env-local';
 import { runScan } from '../src/scan/scanner';
 import type { ScanSummary } from '../src/scan/scanner';
+import { resyncCatalog } from './catalogResync';
 
 // ---------------------------------------------------------------------------
 // JSON-line emitters (stdout = machine; stderr = human)
@@ -94,10 +95,81 @@ function redact(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Catalog-resync task — full-heal blueprint re-pull (Settings → Maintenance).
+//
+// Selected via CARD_BROKER_TASK=catalog-resync. Shares the same env loader and
+// JSON-lines contract as the scan task:
+//   started: {"event":"started","task":"catalog-resync","totalSets":N}
+//   done:    {"event":"done","summary":{ totalSets, ok, failed, grew }}
+//   error:   {"event":"error","message":"<safe>"}
+// The Rust host returns to the UI as soon as "started" is observed; the re-pull
+// continues detached (~13 min for a full run at ~1 req/s).
+// ---------------------------------------------------------------------------
+
+async function runCatalogResyncTask(): Promise<void> {
+  const startMs = Date.now();
+
+  process.stderr.write('\n');
+  process.stderr.write('=== Card // Broker — local catalog re-sync (full heal) ===\n');
+  process.stderr.write(`Started at: ${new Date().toISOString()}\n`);
+  process.stderr.write('Target:     production D1 (same DB as the cron and desktop app)\n');
+  process.stderr.write('\n');
+
+  const env = loadEnv();
+
+  const summary = await resyncCatalog(
+    env,
+    {},
+    {
+      onStart: (totalSets) => {
+        emitJson({ event: 'started', task: 'catalog-resync', totalSets });
+        process.stderr.write(`[catalog-resync] re-pulling ${totalSets} sets...\n`);
+      },
+      onSet: ({ index, total, id, name, count, delta, error }) => {
+        const prefix = `[${index + 1}/${total}] #${id} ${name}`;
+        if (error) {
+          process.stderr.write(`${prefix} → FAILED: ${redact(error)}\n`);
+        } else {
+          const deltaStr = delta && delta > 0 ? ` (+${delta})` : '';
+          process.stderr.write(`${prefix} → ${count} blueprints${deltaStr}\n`);
+        }
+      },
+    },
+  );
+
+  emitJson({
+    event: 'done',
+    summary: {
+      totalSets: summary.totalSets,
+      ok: summary.ok,
+      failed: summary.failed,
+      grew: summary.grew,
+    },
+  });
+
+  const elapsed = Date.now() - startMs;
+  process.stderr.write('\n=== Catalog re-sync complete ===\n');
+  process.stderr.write(`${pad('Sets pulled:')}${summary.totalSets}\n`);
+  process.stderr.write(`${pad('Synced OK:')}${summary.ok}\n`);
+  process.stderr.write(`${pad('Grew (new cards):')}${summary.grew}\n`);
+  process.stderr.write(`${pad('Failed:')}${summary.failed}\n`);
+  process.stderr.write(`${pad('Elapsed:')}${fmtElapsed(elapsed)}\n\n`);
+
+  process.exit(summary.failed > 0 && summary.ok === 0 ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  // Task dispatch — the sidecar binary is shared. CARD_BROKER_TASK selects the
+  // job; absent/"scan" runs the default deep-sweep below.
+  if (process.env.CARD_BROKER_TASK === 'catalog-resync') {
+    await runCatalogResyncTask();
+    return;
+  }
+
   const startMs = Date.now();
 
   // Human-readable header → stderr only.

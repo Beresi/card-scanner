@@ -136,6 +136,15 @@ pub struct LocalScanStarted {
     pub run_id: Option<u32>,
 }
 
+/// Returned by `run_local_catalog_resync`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogResyncStarted {
+    pub started: bool,
+    /// Number of sets the re-pull will process (from the sidecar "started" event).
+    pub total_sets: Option<u32>,
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -330,5 +339,139 @@ pub async fn run_local_scan(app: tauri::AppHandle) -> Result<LocalScanStarted, S
     Ok(LocalScanStarted {
         started: true,
         run_id,
+    })
+}
+
+/// Spawn the `scan-local` sidecar in catalog-resync mode (full-heal blueprint
+/// re-pull), passing the vars-file path via `CARD_BROKER_VARS_FILE` and the task
+/// selector via `CARD_BROKER_TASK=catalog-resync`.
+///
+/// Mirrors `run_local_scan`: drains stdout until the sidecar emits
+/// `{"event":"started","task":"catalog-resync","totalSets":N}` (or exits), then
+/// returns `{ started: true, total_sets: Some(N) }`. The re-pull continues in a
+/// detached task (~13 min for a full run) — the caller is NOT blocked on it.
+///
+/// SECURITY: only the vars-file PATH is injected as an env var; no secret value
+/// is read, logged, or transmitted by this function.
+#[tauri::command]
+pub async fn run_local_catalog_resync(
+    app: tauri::AppHandle,
+) -> Result<CatalogResyncStarted, String> {
+    let vars_path = resolve_vars_file().ok_or_else(|| {
+        "local scan not configured: no vars file found (expected worker/.dev.vars.local)"
+            .to_string()
+    })?;
+    let vars_path_str = vars_path
+        .to_str()
+        .ok_or("vars file path contains non-UTF-8 characters")?;
+
+    let cmd = app
+        .shell()
+        .sidecar("scan-local")
+        .map_err(|e| format!("failed to locate sidecar: {e}"))?
+        .env("CARD_BROKER_VARS_FILE", vars_path_str)
+        .env("CARD_BROKER_TASK", "catalog-resync");
+
+    let (mut rx, _child) = cmd
+        .spawn()
+        .map_err(|e| format!("failed to spawn catalog re-sync: {e}"))?;
+
+    use tauri_plugin_shell::process::CommandEvent;
+
+    const MAX_PRE_START_LINES: usize = 256;
+    let mut total_sets: Option<u32> = None;
+    let mut lines_seen = 0usize;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line_bytes) => {
+                lines_seen += 1;
+                let line = String::from_utf8_lossy(&line_bytes);
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    match v.get("event").and_then(|e| e.as_str()) {
+                        Some("started") => {
+                            total_sets =
+                                v.get("totalSets").and_then(|r| r.as_u64()).map(|n| n as u32);
+                            break;
+                        }
+                        Some("error") => {
+                            let msg = v
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("sidecar config error");
+                            return Err(format!("catalog re-sync failed: {msg}"));
+                        }
+                        _ => {}
+                    }
+                }
+                if lines_seen >= MAX_PRE_START_LINES {
+                    break;
+                }
+            }
+            CommandEvent::Stderr(line_bytes) => {
+                let line = String::from_utf8_lossy(&line_bytes);
+                log::debug!("[catalog-resync stderr] {}", line.trim());
+            }
+            CommandEvent::Terminated(status) => {
+                let code = status.code.unwrap_or(-1);
+                return Err(format!(
+                    "catalog re-sync process exited before starting (code {code})"
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // Detach: keep draining so the sidecar runs to completion in the background.
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes);
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                        match v.get("event").and_then(|e| e.as_str()) {
+                            Some("done") => {
+                                let ok = v
+                                    .get("summary")
+                                    .and_then(|s| s.get("ok"))
+                                    .and_then(|n| n.as_u64())
+                                    .unwrap_or(0);
+                                let grew = v
+                                    .get("summary")
+                                    .and_then(|s| s.get("grew"))
+                                    .and_then(|n| n.as_u64())
+                                    .unwrap_or(0);
+                                log::info!("[catalog-resync] done. ok={ok} grew={grew}");
+                            }
+                            Some("error") => {
+                                let msg = v
+                                    .get("message")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("unknown error");
+                                log::warn!("[catalog-resync] error: {msg}");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                CommandEvent::Stderr(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes);
+                    log::debug!("[catalog-resync stderr] {}", line.trim());
+                }
+                CommandEvent::Terminated(status) => {
+                    log::info!(
+                        "[catalog-resync] process terminated, exit code: {:?}",
+                        status.code
+                    );
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    Ok(CatalogResyncStarted {
+        started: true,
+        total_sets,
     })
 }

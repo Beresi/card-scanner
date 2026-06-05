@@ -1430,32 +1430,69 @@ export async function selectBlueprintsToScanByIds(
 // ---------------------------------------------------------------------------
 
 /**
- * Return the ids of the next `limit` MTG expansions that have not yet had their
- * blueprint catalog exported (i.e. `blueprints_synced_at IS NULL`).
+ * Return the ids of the next `limit` MTG expansions whose blueprint catalog the
+ * hourly cron should (re)export. Two reasons a set qualifies:
+ *   1. Never synced (`blueprints_synced_at IS NULL`) — any age, any set. The
+ *      initial backfill of a brand-new set always happens.
+ *   2. It is one of the `newSetCount` NEWEST sets (highest ids — CardTrader
+ *      assigns ids in release order) AND was last synced more than `refreshDays`
+ *      days ago.
  *
- * Only considers game_id = 1 (Magic: The Gathering).  Results are ordered by
- * `id DESC` (newest expansions first) so current/recent sets — the ones the
- * owner is most likely to be watching and adding to the cart — get card data
- * (images, set, stock) first. Older sets backfill afterward.
+ * The "newest N" gate is deliberate: sparse-snapshot freezing only happens to
+ * fresh releases, whose CardTrader listings keep growing for weeks after launch
+ * (a set imported on release day may cache ~30 cards and need ~250). Older sets
+ * were fully listed when imported and are stable, so re-pulling all ~770 every
+ * week would be wasted CardTrader calls. A set naturally ages out of the window
+ * as newer sets are released, at which point it freezes — which is correct.
  *
- * Returns an empty array when all expansions are synced or the table is empty.
+ * For a deliberate FULL re-pull of every set (e.g. a one-off heal), use the
+ * local `npm run catalog:resync` script, which ignores this window.
+ *
+ * Ordering: never-synced (NULL) first, then stalest first, then `id DESC`.
+ * Only considers game_id = 1 (Magic: The Gathering).
+ * Returns an empty array when nothing qualifies or the table is empty.
  */
 export async function selectNextCatalogExpansions(
   db: D1Database,
   limit: number,
+  refreshDays: number,
+  newSetCount: number,
 ): Promise<number[]> {
   if (limit <= 0) { return []; }
 
+  // SQLite modifier: blueprints_synced_at is a UTC "YYYY-MM-DD HH:MM:SS" string,
+  // so a lexicographic `<` against datetime('now', '-N days') is a valid age test.
+  const modifier = `-${Math.max(0, Math.floor(refreshDays))} days`;
+  const newCount = Math.max(0, Math.floor(newSetCount));
+
+  // Stale re-checks are limited to ids >= the Nth-newest id (the "new sets"
+  // window). The subquery resolves that threshold id; never-synced sets bypass
+  // the window entirely via the NULL branch.
   const { results } = await db
     .prepare(
       `SELECT id
          FROM expansions
         WHERE game_id = 1
-          AND blueprints_synced_at IS NULL
-        ORDER BY id DESC
+          AND (
+            blueprints_synced_at IS NULL
+            OR (
+              blueprints_synced_at < datetime('now', ?)
+              AND id >= (
+                SELECT MIN(id) FROM (
+                  SELECT id FROM expansions
+                   WHERE game_id = 1
+                   ORDER BY id DESC
+                   LIMIT ?
+                )
+              )
+            )
+          )
+        ORDER BY (blueprints_synced_at IS NOT NULL) ASC,
+                 blueprints_synced_at ASC,
+                 id DESC
         LIMIT ?`,
     )
-    .bind(limit)
+    .bind(modifier, newCount, limit)
     .all<{ id: number }>();
 
   return results.map((r) => r.id);
