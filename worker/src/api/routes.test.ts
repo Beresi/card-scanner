@@ -1694,3 +1694,90 @@ describe('GET /api/scan/runs', () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PATCH /api/config — scan_interval_minutes validation (migration 0011)
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/config — scan_interval_minutes validation', () => {
+  it('accepts minimum value 1', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: 1 });
+    expect(res.status).toBe(200);
+    const body = await res.json<ConfigRow>();
+    expect(body.scan_interval_minutes).toBe(1);
+  });
+
+  it('accepts maximum value 1440 (one day)', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: 1440 });
+    expect(res.status).toBe(200);
+    const body = await res.json<ConfigRow>();
+    expect(body.scan_interval_minutes).toBe(1440);
+  });
+
+  it('accepts typical value 60 (one hour)', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: 60 });
+    expect(res.status).toBe(200);
+    const body = await res.json<ConfigRow>();
+    expect(body.scan_interval_minutes).toBe(60);
+  });
+
+  it('rejects 0 with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: 0 });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('rejects negative value with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: -10 });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('rejects value > 1440 with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: 1441 });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('rejects a non-integer (float) with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: 30.5 });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('rejects a string value with 400', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await PATCH(env, `${BASE}/api/config`, { scan_interval_minutes: '60' });
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe('invalid_request');
+  });
+
+  it('default is 60 on a fresh DB', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await GET(env, `${BASE}/api/config`);
+    expect(res.status).toBe(200);
+    const body = await res.json<ConfigRow>();
+    expect(body.scan_interval_minutes).toBe(60);
+  });
+});

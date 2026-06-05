@@ -15,9 +15,8 @@
  *
  *  'wholeset' (paid-tier fallback)
  *    One marketplaceProducts({expansionId}) call per expansion item — same
- *    logic as Phase 1.  A self-throttle skips cron ticks that arrive within
- *    ~55 minutes of the last finished scan (prevents re-scanning whole sets
- *    every 2 minutes). run-now ALWAYS executes.
+ *    logic as Phase 1.  The cron-interval gate lives in index.ts scheduled()
+ *    via shouldRunCron(config.scan_interval_minutes) — run-now ALWAYS executes.
  *
  * What this module does NOT do:
  *  - No deal math, no routing math — pure cores handle those.
@@ -41,6 +40,8 @@ import { evaluateBlueprint } from './dealEngine';
 import {
   openScanRun,
   closeScanRun,
+  reapStaleScanRuns,
+  updateScanRunProgress,
   listActiveWatchlist,
   getConfig,
   patchConfig,
@@ -52,7 +53,6 @@ import {
   selectBlueprintsToScan,
   selectBlueprintsToScanByIds,
   markBlueprintsScanned,
-  getLatestFinishedScanAt,
   countActiveExpansionBlueprints,
   countScannedThisCycle,
   resolveCardBlueprints,
@@ -85,16 +85,23 @@ export interface ScanSummary {
   apiCalls: number;
   dealsFound: number;
   telegramSent: number;
-  /** null on a clean run; 'skipped' when the wholeset self-throttle fires. */
+  /** null on a clean run; non-null string on any scan-level error. */
   error: string | null;
 }
 
 /**
  * Injectable dependencies — used by tests to swap the CardTrader client
  * without a real API token.
+ *
+ * @param onRunOpened  Optional callback invoked immediately after the
+ *   scan_runs row is opened, with the newly-allocated run id. Useful for
+ *   callers that need to observe the runId before the scan completes (e.g.
+ *   the sidecar CLI emits a JSON `started` event at open time). Cron and
+ *   run-now callers pass no deps → unchanged behaviour.
  */
 export interface ScanDeps {
   createClient?: typeof createCardTraderClient;
+  onRunOpened?: (runId: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,13 +126,49 @@ const MAX_CARD_BLUEPRINTS_PER_ITEM = 200;
  * Always resolves — never rejects for a scan-level failure. Whole-run errors
  * are recorded in scan_runs.error and reflected in ScanSummary.error; the row
  * is always closed via the finally block.
+ *
+ * @param opts.modeOverride  Optional scan-mode override. When supplied, it
+ *   takes precedence over config.scan_mode for THIS run only — D1 is never
+ *   mutated. The cron and POST /api/scan/run-now callers omit this field, so
+ *   their behavior is byte-for-byte unchanged. The local deep-sweep CLI passes
+ *   modeOverride:'wholeset' + trigger:'run-now' to scan every expansion in one
+ *   uncapped pass without the chunked rotation budget.
+ *
+ * @param opts.liveProgress  When true, periodically writes running counts to
+ *   the open scan_runs row via updateScanRunProgress so the frontend can display
+ *   "X / Y scanned" during a long local run. Default false (omitted). The cloud
+ *   cron and cloud run-now paths NEVER set this — they incur zero extra D1
+ *   writes. Progress writes are fire-and-forget with errors swallowed; a failed
+ *   write never aborts the scan. closeScanRun remains the authoritative final
+ *   write for all counts.
  */
 export async function runScan(
   env: Env,
-  opts: { trigger: ScanTrigger },
+  opts: { trigger: ScanTrigger; modeOverride?: 'chunked' | 'wholeset'; liveProgress?: boolean },
   deps?: ScanDeps,
 ): Promise<ScanSummary> {
   const runId = await openScanRun(env.DB);
+
+  // Reap any stale/abandoned scan_runs rows from prior runs that were killed
+  // before their finally block executed. We do this immediately after opening
+  // the new row so the desktop always sees a clean "newest = current run" view.
+  // The reaper only closes rows that have BOTH been open > 15 min AND have
+  // blueprints_scanned = 0 — a live long sweep with real progress is safe.
+  // Errors are swallowed so a reaper failure never aborts the scan.
+  try {
+    const reaped = await reapStaleScanRuns(env.DB);
+    if (reaped > 0) {
+      console.info('[scanner] reaped stale scan_runs rows', { count: reaped });
+    }
+  } catch (reaperErr) {
+    console.error('[scanner] reapStaleScanRuns failed (non-fatal)', {
+      error: reaperErr instanceof Error ? reaperErr.message : String(reaperErr),
+    });
+  }
+
+  // Notify any observer that the run row is open and we have an id.
+  // The cron and run-now route callers pass no deps, so this is a no-op for them.
+  deps?.onRunOpened?.(runId);
 
   let watchItemsScanned = 0;
   let blueprintsScanned = 0;
@@ -133,6 +176,63 @@ export async function runScan(
   let dealsFound = 0;
   let telegramSent = 0;
   let runError: string | null = null;
+
+  // ---------------------------------------------------------------------------
+  // Live-progress flush helpers — gated on opts.liveProgress.
+  // Used ONLY by the local deep-sweep sidecar (liveProgress: true).
+  // The cloud cron and cloud run-now paths never set this flag → zero extra writes.
+  // ---------------------------------------------------------------------------
+
+  /** Minimum wall-clock gap between progress flushes (ms). */
+  const PROGRESS_FLUSH_INTERVAL_MS = 2000;
+  let lastProgressFlushMs = 0;
+
+  /**
+   * Write current counts to the open scan_runs row.
+   * Errors are swallowed — a transient D1 write failure must never abort the scan.
+   * Returns a Promise but callers may fire-and-forget (void) safely.
+   */
+  async function flushProgress(): Promise<void> {
+    try {
+      await updateScanRunProgress(env.DB, runId, {
+        watchItemsScanned,
+        blueprintsScanned,
+        apiCalls,
+        dealsFound,
+      });
+      lastProgressFlushMs = Date.now();
+    } catch {
+      // Cosmetic write — swallow silently. closeScanRun is the authoritative final write.
+    }
+  }
+
+  /**
+   * Flush if at least PROGRESS_FLUSH_INTERVAL_MS have elapsed since the last flush.
+   * No-op when liveProgress is not enabled. Fire-and-forget: void the returned promise.
+   */
+  function maybeFlushProgress(): void {
+    if (!opts.liveProgress) { return; }
+    if (Date.now() - lastProgressFlushMs >= PROGRESS_FLUSH_INTERVAL_MS) {
+      void flushProgress();
+    }
+  }
+
+  /**
+   * Force a progress flush regardless of the time guard.
+   * Used at watch-item boundaries so the "X/Y sets" counter updates promptly.
+   * No-op when liveProgress is not enabled. Fire-and-forget.
+   */
+  function forceFlushProgress(): void {
+    if (!opts.liveProgress) { return; }
+    void flushProgress();
+  }
+
+  // Initial flush right after openScanRun so the row reads 0/0 immediately
+  // (before any API calls) — the UI can detect the run is live as soon as the
+  // row exists.
+  if (opts.liveProgress) {
+    void flushProgress();
+  }
 
   const newDeals: { deal: DealInsert; eff: EffectiveSettings }[] = [];
 
@@ -167,23 +267,48 @@ export async function runScan(
     const watchlist = await listActiveWatchlist(env.DB);
 
     // Step 3: Dispatch to the correct scan mode.
-    if (config.scan_mode === 'wholeset') {
+    // modeOverride (when present) wins over config.scan_mode for this run only.
+    // D1 is never mutated — the override is ephemeral and local to this call.
+    const mode = opts.modeOverride ?? config.scan_mode;
+    if (mode === 'wholeset') {
       await runWholeset(
-        client, watchlist, config, env.DB, opts.trigger,
+        client, watchlist, config, env.DB,
         {
-          onWatchItemScanned: () => { watchItemsScanned++; },
-          onBlueprintScanned: () => { blueprintsScanned++; },
-          onNewDeal: (deal, eff) => { dealsFound++; newDeals.push({ deal, eff }); },
+          onWatchItemScanned: () => {
+            watchItemsScanned++;
+            // Force-flush at each watch-item boundary so "X/Y sets" is timely.
+            forceFlushProgress();
+          },
+          onBlueprintScanned: () => {
+            blueprintsScanned++;
+            maybeFlushProgress();
+          },
+          onNewDeal: (deal, eff) => {
+            dealsFound++;
+            newDeals.push({ deal, eff });
+            maybeFlushProgress();
+          },
           onSkip: (msg) => { runError = msg; },
         },
       );
     } else {
+      // mode === 'chunked' (default free-tier path)
       await runChunked(
         client, watchlist, config, env.DB,
         {
-          onWatchItemScanned: () => { watchItemsScanned++; },
-          onBlueprintScanned: () => { blueprintsScanned++; },
-          onNewDeal: (deal, eff) => { dealsFound++; newDeals.push({ deal, eff }); },
+          onWatchItemScanned: () => {
+            watchItemsScanned++;
+            // Force-flush at each watch-item boundary so "X/Y sets" is timely.
+            forceFlushProgress();
+          },
+          onBlueprintScanned: () => {
+            blueprintsScanned++;
+            maybeFlushProgress();
+          },
+          onNewDeal: (deal, eff) => {
+            dealsFound++; newDeals.push({ deal, eff });
+            maybeFlushProgress();
+          },
         },
       );
     }
@@ -260,9 +385,6 @@ export async function runScan(
 // Wholeset mode (paid-tier fallback)
 // ---------------------------------------------------------------------------
 
-/** Minimum minutes between wholeset cron runs. */
-const WHOLESET_MIN_INTERVAL_MINUTES = 55;
-
 interface ScanCallbacks {
   onWatchItemScanned: () => void;
   onBlueprintScanned: () => void;
@@ -270,7 +392,7 @@ interface ScanCallbacks {
 }
 
 interface WholesetCallbacks extends ScanCallbacks {
-  /** Called when the cron self-throttle fires; receives the skip message. */
+  /** Called when a scan item produces a skippable error; receives a message. */
   onSkip: (msg: string) => void;
 }
 
@@ -279,32 +401,18 @@ interface WholesetCallbacks extends ScanCallbacks {
  * expansion item. For blueprint items, one per-blueprint call (unchanged).
  * For card items, resolve to blueprint ids and scan each individually.
  *
- * Self-throttle: if the trigger is 'cron' AND the last finished scan was within
- * WHOLESET_MIN_INTERVAL_MINUTES, skip (log + call onSkip) and return immediately
- * so the 2-min cron doesn't re-scan whole sets every tick. run-now always runs.
+ * The cron-interval gate now lives in scheduled() (index.ts) via shouldRunCron(),
+ * which reads config.scan_interval_minutes and skips the tick BEFORE openScanRun
+ * is called. runWholeset no longer self-throttles — the heartbeat gate supersedes
+ * the old per-mode check for all scan modes. run-now always runs unconditionally.
  */
 async function runWholeset(
   client: CardTraderClient,
   watchlist: WatchlistRow[],
   config: ConfigRow,
   db: D1Database,
-  trigger: ScanTrigger,
   callbacks: WholesetCallbacks,
 ): Promise<void> {
-  if (trigger === 'cron') {
-    const lastFinished = await getLatestFinishedScanAt(db);
-    if (lastFinished !== null) {
-      const ageMs = Date.now() - new Date(lastFinished + 'Z').getTime();
-      const ageMinutes = ageMs / 60_000;
-      if (ageMinutes < WHOLESET_MIN_INTERVAL_MINUTES) {
-        const msg = `skipped: wholeset last ran ${Math.round(ageMinutes)}m ago (< ${WHOLESET_MIN_INTERVAL_MINUTES}m)`;
-        console.info('[scanner] wholeset self-throttle', { ageMinutes: Math.round(ageMinutes) });
-        callbacks.onSkip(msg);
-        return;
-      }
-    }
-  }
-
   for (const item of watchlist) {
     if (item.type === 'card') {
       // Card items: resolve to blueprint ids and scan each individually.
@@ -371,6 +479,11 @@ async function runWholesetCardItem(
       // Non-fatal; continue to next blueprint.
     }
   }
+
+  // Tick the watch-item counter ONCE for the entire card item, regardless of how
+  // many blueprints it resolved to. This must come after the blueprint loop so the
+  // force-flush in the runWholeset caller fires at the right moment.
+  callbacks.onWatchItemScanned();
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +791,11 @@ async function runChunked(
   const startMs = Date.now();
   let pending: number[] = [];
 
+  // Track which distinct owner watchlist item ids had blueprints scanned this
+  // batch. At the end we call onWatchItemScanned() once per unique owner so
+  // watch_items_scanned reflects distinct watchlist rows, never blueprints.
+  const scannedOwnerIds = new Set<number>();
+
   async function flushPending(): Promise<void> {
     if (pending.length > 0) {
       const batch = pending;
@@ -703,6 +821,9 @@ async function runChunked(
       continue;
     }
 
+    // Record the owning watchlist item before scanning so we count it even on error.
+    scannedOwnerIds.add(ownerItem.id);
+
     // Mark as attempted (scanned) so the cursor advances even on error.
     pending.push(bp.id);
 
@@ -723,6 +844,13 @@ async function runChunked(
 
   // Persist any remaining attempted blueprints.
   await flushPending();
+
+  // Tick onWatchItemScanned once per distinct owner watchlist item that had at
+  // least one blueprint scanned this batch. This ensures watch_items_scanned ≤
+  // number of active watchlist rows and never equals the blueprint count.
+  for (const _ownerId of scannedOwnerIds) {
+    callbacks.onWatchItemScanned();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -803,7 +931,12 @@ async function scanBlueprintById(
     ...foilParam,
   });
 
-  callbacks.onWatchItemScanned();
+  // NOTE: onWatchItemScanned is NOT called here.
+  // scanBlueprintById scans a single blueprint and should only call
+  // onBlueprintScanned(). The top-level watch-item tick is the caller's
+  // responsibility: scanItem() ticks once per item; runWholesetCardItem()
+  // ticks once per card item (not once per resolved blueprint); and
+  // runChunked() counts distinct owner watchlist items at the end of the batch.
 
   for (const [bpIdStr, products] of Object.entries(response)) {
     callbacks.onBlueprintScanned();

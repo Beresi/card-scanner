@@ -5,6 +5,8 @@ node_modules/
 dist/
 build/
 **/src-tauri/target/
+# Tauri sidecar binaries — built artifacts, not committed
+desktop/src-tauri/binaries/*.exe
 
 # ─── Cloudflare / Wrangler local state ─────────────────────────────────────
 .wrangler/

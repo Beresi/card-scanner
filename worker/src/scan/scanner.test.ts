@@ -85,15 +85,21 @@ function buildMockDb(): { db: D1Database; state: MockDbState } {
       }
 
       if (sqlUpper.startsWith('UPDATE SCAN_RUNS')) {
-        // closeScanRun: UPDATE → capture the bind args when run() is called.
+        // Two UPDATE SCAN_RUNS calls are now possible:
+        //  1. reapStaleScanRuns  — contains 'BLUEPRINTS_SCANNED = 0'; binds one arg (interval)
+        //  2. closeScanRun       — binds 7 args (counts + error + id); we capture this one
+        const isReaper = sqlUpper.includes('BLUEPRINTS_SCANNED = 0');
         return {
           bind(...args: unknown[]) {
             return {
               run() {
-                state.closeCallCount++;
-                state.closeBindArgs = args;
+                if (!isReaper) {
+                  // Only count and capture the authoritative closeScanRun call.
+                  state.closeCallCount++;
+                  state.closeBindArgs = args;
+                }
                 return Promise.resolve({
-                  meta: { changes: 1 },
+                  meta: { changes: isReaper ? 0 : 1 },
                   results: [],
                   success: true,
                 } as unknown as D1Result);

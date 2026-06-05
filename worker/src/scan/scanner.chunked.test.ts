@@ -1,7 +1,7 @@
 /**
- * Chunked scan mode + wholeset self-throttle tests.
+ * Chunked scan mode + wholeset scan mode tests.
  *
- * These tests exercise the new runScan branches introduced in migration 0003:
+ * These tests exercise the runScan branches introduced in migration 0003:
  *
  *  (A) Chunked mode — per-card rotation via last_scanned_at cursor:
  *    A1. Expansion blueprints cached; two runs scan distinct batches (rotation advances).
@@ -11,10 +11,12 @@
  *    A5. Deals use owning expansion's watchlist_id.
  *    A6. Per-blueprint failure is non-fatal; run continues; rotation still advances.
  *
- *  (B) Wholeset self-throttle:
- *    B1. cron trigger + recent finished scan → SKIP (zero marketplace calls).
- *    B2. run-now trigger + recent finished scan → ALWAYS runs (no skip).
- *    B3. cron trigger + old/absent finished scan → runs fully.
+ *  (B) Wholeset mode — run-now always executes (interval gate is in scheduled()):
+ *    B1. run-now trigger → always runs regardless of prior scan history.
+ *    B2. cron trigger (no prior history) → always runs (gate is upstream in scheduled()).
+ *    Note: The scan-interval gate now lives in index.ts scheduled() via
+ *    shouldRunCron(config.scan_interval_minutes). runScan itself never skips.
+ *    See cronGate.test.ts for the pure gate-decision tests.
  *
  *  (C) Schema + patchConfig:
  *    C1. Config table has scan_mode DEFAULT 'chunked'.
@@ -38,6 +40,7 @@ import {
   markBlueprintsScanned,
   countScannedThisCycle,
   countActiveExpansionBlueprints,
+  reapStaleScanRuns,
 } from '../db/repo';
 import { CardTraderError } from '../cardtrader/types';
 import type { CardTraderClient } from '../cardtrader/client';
@@ -199,51 +202,32 @@ describe('(C) Schema defaults — scan_mode and scan_batch_size', () => {
 });
 
 // ---------------------------------------------------------------------------
-// (B) Wholeset self-throttle
+// (B) Wholeset mode — runScan always runs (interval gate is in scheduled())
 // ---------------------------------------------------------------------------
 
-describe('(B) Wholeset self-throttle', () => {
+describe('(B) Wholeset mode — runScan never self-throttles', () => {
   /**
-   * Build a wholeset-mode DB with optional "recent finished scan" history
-   * and an active expansion watch item.
+   * The per-run interval gate (WHOLESET_MIN_INTERVAL_MINUTES) has been removed
+   * from runScan. The gate now lives in index.ts scheduled() via shouldRunCron()
+   * reading config.scan_interval_minutes. This means runScan with trigger:'cron'
+   * or trigger:'run-now' ALWAYS executes when called — the throttle decision is
+   * made upstream, before openScanRun is ever called.
+   *
+   * Tests confirm:
+   *  B1. run-now + prior finished scan → always runs (no skip).
+   *  B2. cron trigger + prior history → always runs (gate not in runScan).
    */
-  function makeWholesetEnv(recentFinishedScan: boolean) {
+  function makeWholesetEnv() {
     const { db, raw } = makeD1();
-    // Switch to wholeset mode.
     raw.exec(`UPDATE config SET scan_mode = 'wholeset' WHERE id = 1`);
     seedExpansionItem(raw, 200);
-    if (recentFinishedScan) {
-      // finished 5 minutes ago — inside the 55-minute window
-      seedFinishedScan(raw, `datetime('now', '-5 minutes')`);
-    }
+    // Seed a recently-finished scan — runScan must NOT skip on its own.
+    seedFinishedScan(raw, `datetime('now', '-5 minutes')`);
     return { db, raw };
   }
 
-  it('B1: cron + recent scan → skipped, zero marketplace calls', async () => {
-    const { db } = makeWholesetEnv(true);
-    const marketplaceSpy = vi.fn().mockResolvedValue({});
-    const client: CardTraderClient = {
-      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
-      marketplaceProducts: marketplaceSpy,
-      expansions: vi.fn().mockResolvedValue([]),
-      blueprintsExport: vi.fn().mockResolvedValue([]),
-      getCart: vi.fn().mockRejectedValue(new Error('not used')),
-      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
-      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
-    };
-    const env = makeEnv(db);
-    const summary = await runScan(env, { trigger: 'cron' }, {
-      createClient: (_t, _o) => client,
-    });
-
-    expect(marketplaceSpy).not.toHaveBeenCalled();
-    // The self-throttle sets runError to a "skipped" message.
-    expect(summary.error).toContain('skipped');
-    expect(summary.watchItemsScanned).toBe(0);
-  });
-
-  it('B2: run-now + recent scan → ALWAYS runs (not skipped)', async () => {
-    const { db } = makeWholesetEnv(true);
+  it('B1: run-now + recent scan → ALWAYS runs (no skip)', async () => {
+    const { db } = makeWholesetEnv();
     const marketplaceSpy = vi.fn().mockResolvedValue(makeNoDealResponse(999, 8001));
     const client: CardTraderClient = {
       info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
@@ -254,19 +238,16 @@ describe('(B) Wholeset self-throttle', () => {
       cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
       cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
-    const env = makeEnv(db);
-    const summary = await runScan(env, { trigger: 'run-now' }, {
+    const summary = await runScan(makeEnv(db), { trigger: 'run-now' }, {
       createClient: (_t, _o) => client,
     });
 
-    // marketplaceProducts called for the expansion item (expansionId=200).
     expect(marketplaceSpy).toHaveBeenCalled();
-    // No "skipped" error.
     expect(summary.error).toBeNull();
   });
 
-  it('B3: cron + NO prior finished scan → runs fully', async () => {
-    const { db } = makeWholesetEnv(false);
+  it('B2: cron trigger + recent scan → ALWAYS runs (interval gate is upstream in scheduled())', async () => {
+    const { db } = makeWholesetEnv();
     const marketplaceSpy = vi.fn().mockResolvedValue(makeNoDealResponse(999, 8002));
     const client: CardTraderClient = {
       info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
@@ -277,34 +258,11 @@ describe('(B) Wholeset self-throttle', () => {
       cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
       cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
     };
-    const env = makeEnv(db);
-    const summary = await runScan(env, { trigger: 'cron' }, {
+    const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
       createClient: (_t, _o) => client,
     });
 
-    expect(marketplaceSpy).toHaveBeenCalled();
-    expect(summary.error).toBeNull();
-  });
-
-  it('B3b: cron + old finished scan (>55m ago) → runs fully', async () => {
-    const { db, raw } = makeWholesetEnv(false);
-    // finished 2 hours ago — outside the 55-minute window
-    seedFinishedScan(raw, `datetime('now', '-120 minutes')`);
-    const marketplaceSpy = vi.fn().mockResolvedValue(makeNoDealResponse(999, 8003));
-    const client: CardTraderClient = {
-      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
-      marketplaceProducts: marketplaceSpy,
-      expansions: vi.fn().mockResolvedValue([]),
-      blueprintsExport: vi.fn().mockResolvedValue([]),
-      getCart: vi.fn().mockRejectedValue(new Error('not used')),
-      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
-      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
-    };
-    const env = makeEnv(db);
-    const summary = await runScan(env, { trigger: 'cron' }, {
-      createClient: (_t, _o) => client,
-    });
-
+    // runScan itself no longer skips — gate is in scheduled().
     expect(marketplaceSpy).toHaveBeenCalled();
     expect(summary.error).toBeNull();
   });
@@ -865,5 +823,310 @@ describe('(D) Scan cycle management — scanner integration', () => {
       { scan_cycle_started_at: string | null };
     // Wholeset mode must not touch the cycle column
     expect(afterRow.scan_cycle_started_at).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (E) watch_items_scanned correctness — BUG 1 regression tests
+//
+// Invariant: watch_items_scanned <= number of active watchlist rows in every
+// scan mode.  Before the fix, scanBlueprintById called onWatchItemScanned()
+// which caused card-type and expansion-type items to inflate the count by the
+// number of blueprints rather than 1.
+// ---------------------------------------------------------------------------
+
+describe('(E) watch_items_scanned — distinct top-level watchlist items only', () => {
+  /**
+   * Helper: read the final watch_items_scanned from the most recent scan_runs row.
+   */
+  function getWatchItemsScanned(raw: ReturnType<typeof makeD1>['raw']): number {
+    const row = raw
+      .prepare(`SELECT watch_items_scanned FROM scan_runs ORDER BY id DESC LIMIT 1`)
+      .get() as { watch_items_scanned: number } | undefined;
+    return row?.watch_items_scanned ?? -1;
+  }
+
+  function makeNoDealClient(): CardTraderClient {
+    return {
+      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
+      marketplaceProducts: vi.fn().mockImplementation((q: { blueprintId?: number }) =>
+        Promise.resolve(makeNoDealResponse(q.blueprintId ?? 0, (q.blueprintId ?? 0) * 10)),
+      ),
+      expansions: vi.fn().mockResolvedValue([]),
+      blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
+    };
+  }
+
+  it('E1: chunked — 1 expansion item with 5 blueprints → watch_items_scanned = 1', async () => {
+    // One expansion watchlist row, 5 blueprints. The bug would have set
+    // watch_items_scanned = 5 (once per blueprint). The fix sets it to 1.
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'chunked', scan_batch_size = 10 WHERE id = 1`);
+    seedExpansionItem(raw, 11);
+    seedBlueprints(raw, 11, [11001, 11002, 11003, 11004, 11005], null);
+
+    const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    // There is exactly 1 active watchlist row.
+    expect(summary.watchItemsScanned).toBe(1);
+    expect(getWatchItemsScanned(raw)).toBe(1);
+    // The blueprint count must be >= 1 and not equal to the watch-item count
+    // (this is the regression guard).
+    expect(summary.blueprintsScanned).toBeGreaterThanOrEqual(1);
+  });
+
+  it('E2: chunked — 2 expansion items each with 3 blueprints → watch_items_scanned = 2', async () => {
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'chunked', scan_batch_size = 10 WHERE id = 1`);
+    seedExpansionItem(raw, 12);
+    seedExpansionItem(raw, 13);
+    seedBlueprints(raw, 12, [12001, 12002, 12003], null);
+    seedBlueprints(raw, 13, [13001, 13002, 13003], null);
+
+    const summary = await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    // 2 distinct watchlist items, not 6 blueprints.
+    expect(summary.watchItemsScanned).toBe(2);
+    expect(getWatchItemsScanned(raw)).toBe(2);
+  });
+
+  it('E3: wholeset — 1 expansion item → watch_items_scanned = 1 regardless of blueprint count', async () => {
+    // scanItem already called onWatchItemScanned exactly once per expansion item;
+    // this test ensures that invariant is preserved after removing the scanBlueprintById tick.
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'wholeset' WHERE id = 1`);
+    // Use expansionId 14 with a direct expansion item (uses scanItem, not scanBlueprintById).
+    seedExpansionItem(raw, 14);
+    raw.exec(`INSERT INTO expansions (id, game_id, code, name) VALUES (14, 1, 'T14', 'Test 14')`);
+
+    // Client returns 3 blueprints for the expansion scan — 3 onBlueprintScanned ticks.
+    const resp: Record<string, unknown[]> = {
+      '14001': makeNoDealResponse(14001, 14001 * 100)[14001],
+      '14002': makeNoDealResponse(14002, 14002 * 100)[14002],
+      '14003': makeNoDealResponse(14003, 14003 * 100)[14003],
+    };
+    const client: CardTraderClient = {
+      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
+      marketplaceProducts: vi.fn().mockImplementation((params: Record<string, unknown>) => {
+        if ('expansionId' in params && params.expansionId === 14) {
+          return Promise.resolve(resp);
+        }
+        return Promise.resolve({});
+      }),
+      expansions: vi.fn().mockResolvedValue([]),
+      blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
+    };
+
+    const summary = await runScan(makeEnv(db), { trigger: 'run-now' }, {
+      createClient: (_t, _o) => client,
+    });
+
+    // 1 expansion watch item, regardless of how many blueprints came back.
+    expect(summary.watchItemsScanned).toBe(1);
+    expect(summary.blueprintsScanned).toBe(3);
+    expect(getWatchItemsScanned(raw)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (F) reapStaleScanRuns — unit tests for the stale-row reaper (BUG 2)
+// ---------------------------------------------------------------------------
+
+describe('(F) reapStaleScanRuns — stale row cleanup', () => {
+  /** Insert a raw scan_runs row with specific started_at and blueprints_scanned. */
+  function seedScanRun(
+    raw: ReturnType<typeof makeD1>['raw'],
+    opts: { startedMinsAgo: number; blueprintsScanned?: number; finished?: boolean },
+  ): number {
+    const { startedMinsAgo, blueprintsScanned = 0, finished = false } = opts;
+    const info = raw
+      .prepare(
+        `INSERT INTO scan_runs
+           (started_at, finished_at, blueprints_scanned, watch_items_scanned, api_calls, deals_found, telegram_sent)
+         VALUES
+           (datetime('now', ?), ${finished ? "datetime('now')" : 'NULL'}, ?, 0, 0, 0, 0)`,
+      )
+      .run(`-${startedMinsAgo} minutes`, blueprintsScanned);
+    return Number(info.lastInsertRowid);
+  }
+
+  function getRunRow(
+    raw: ReturnType<typeof makeD1>['raw'],
+    id: number,
+  ): { finished_at: string | null; error: string | null } {
+    return raw
+      .prepare(`SELECT finished_at, error FROM scan_runs WHERE id = ?`)
+      .get(id) as { finished_at: string | null; error: string | null };
+  }
+
+  it('F1: reaps an open row older than threshold with blueprints_scanned=0', async () => {
+    const { db, raw } = makeD1();
+    const id = seedScanRun(raw, { startedMinsAgo: 20, blueprintsScanned: 0 });
+
+    const reaped = await reapStaleScanRuns(db, 15);
+
+    expect(reaped).toBe(1);
+    const row = getRunRow(raw, id);
+    expect(row.finished_at).not.toBeNull();
+    expect(row.error).toContain('stale');
+  });
+
+  it('F2: does NOT reap an open row with blueprints_scanned > 0 (live long sweep)', async () => {
+    const { db, raw } = makeD1();
+    const id = seedScanRun(raw, { startedMinsAgo: 40, blueprintsScanned: 1200 });
+
+    const reaped = await reapStaleScanRuns(db, 15);
+
+    expect(reaped).toBe(0);
+    const row = getRunRow(raw, id);
+    // Must NOT have been closed by the reaper.
+    expect(row.finished_at).toBeNull();
+  });
+
+  it('F3: does NOT reap a row younger than the threshold', async () => {
+    const { db, raw } = makeD1();
+    const id = seedScanRun(raw, { startedMinsAgo: 5, blueprintsScanned: 0 });
+
+    const reaped = await reapStaleScanRuns(db, 15);
+
+    expect(reaped).toBe(0);
+    const row = getRunRow(raw, id);
+    expect(row.finished_at).toBeNull();
+  });
+
+  it('F4: does NOT reap an already-finished row', async () => {
+    const { db, raw } = makeD1();
+    const id = seedScanRun(raw, { startedMinsAgo: 60, blueprintsScanned: 0, finished: true });
+    const before = getRunRow(raw, id);
+
+    await reapStaleScanRuns(db, 15);
+
+    // finished_at must not have changed.
+    const after = getRunRow(raw, id);
+    expect(after.finished_at).toBe(before.finished_at);
+  });
+
+  it('F5: reaps multiple stale rows in one call', async () => {
+    const { db, raw } = makeD1();
+    seedScanRun(raw, { startedMinsAgo: 30, blueprintsScanned: 0 });
+    seedScanRun(raw, { startedMinsAgo: 60, blueprintsScanned: 0 });
+    // This one must survive (has progress).
+    seedScanRun(raw, { startedMinsAgo: 45, blueprintsScanned: 500 });
+
+    const reaped = await reapStaleScanRuns(db, 15);
+
+    expect(reaped).toBe(2);
+  });
+
+  it('F6: preserves an existing error message (COALESCE does not overwrite)', async () => {
+    const { db, raw } = makeD1();
+    // Insert a row with an existing error already set.
+    const info = raw
+      .prepare(
+        `INSERT INTO scan_runs
+           (started_at, finished_at, blueprints_scanned, watch_items_scanned, api_calls, deals_found, telegram_sent, error)
+         VALUES (datetime('now', '-30 minutes'), NULL, 0, 0, 0, 0, 0, 'original error')`,
+      )
+      .run();
+    const id = Number(info.lastInsertRowid);
+
+    await reapStaleScanRuns(db, 15);
+
+    const row = getRunRow(raw, id);
+    // COALESCE(error, '...') keeps the original error.
+    expect(row.error).toBe('original error');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (G) runScan plants and reaps a stale-0-count row, but not a progressing row
+// ---------------------------------------------------------------------------
+
+describe('(G) runScan — reaper integration', () => {
+  function makeNoDealClient(): CardTraderClient {
+    return {
+      info: () => Promise.resolve({ id: 1, name: 'test', user_id: 1 }),
+      marketplaceProducts: vi.fn().mockImplementation((q: { blueprintId?: number }) =>
+        Promise.resolve(makeNoDealResponse(q.blueprintId ?? 0, (q.blueprintId ?? 0) * 10)),
+      ),
+      expansions: vi.fn().mockResolvedValue([]),
+      blueprintsExport: vi.fn().mockResolvedValue([]),
+      getCart: vi.fn().mockRejectedValue(new Error('not used')),
+      cartAdd: vi.fn().mockRejectedValue(new Error('not used')),
+      cartRemove: vi.fn().mockRejectedValue(new Error('not used')),
+    };
+  }
+
+  it('G1: runScan reaps a planted stale open row with blueprints_scanned=0', async () => {
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'chunked', scan_batch_size = 5 WHERE id = 1`);
+    seedExpansionItem(raw, 70);
+    seedBlueprints(raw, 70, [70001, 70002], null);
+
+    // Plant a stale row: open, 20 min old, blueprints_scanned=0.
+    const staleId = Number(
+      raw
+        .prepare(
+          `INSERT INTO scan_runs
+             (started_at, finished_at, blueprints_scanned, watch_items_scanned, api_calls, deals_found, telegram_sent)
+           VALUES (datetime('now', '-20 minutes'), NULL, 0, 0, 0, 0, 0)`,
+        )
+        .run().lastInsertRowid,
+    );
+
+    // The planted row is open before the run.
+    const before = raw
+      .prepare(`SELECT finished_at FROM scan_runs WHERE id = ?`)
+      .get(staleId) as { finished_at: string | null };
+    expect(before.finished_at).toBeNull();
+
+    await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    // The stale row must now be closed (reaped) by the new run.
+    const after = raw
+      .prepare(`SELECT finished_at, error FROM scan_runs WHERE id = ?`)
+      .get(staleId) as { finished_at: string | null; error: string | null };
+    expect(after.finished_at).not.toBeNull();
+    expect(after.error).toContain('stale');
+  });
+
+  it('G2: runScan does NOT reap a stale row that has blueprints_scanned > 0', async () => {
+    const { db, raw } = makeD1();
+    raw.exec(`UPDATE config SET scan_mode = 'chunked', scan_batch_size = 5 WHERE id = 1`);
+    seedExpansionItem(raw, 71);
+    seedBlueprints(raw, 71, [71001], null);
+
+    // Plant a stale row: open, 40 min old, blueprints_scanned=1200 (a live long sweep).
+    const liveId = Number(
+      raw
+        .prepare(
+          `INSERT INTO scan_runs
+             (started_at, finished_at, blueprints_scanned, watch_items_scanned, api_calls, deals_found, telegram_sent)
+           VALUES (datetime('now', '-40 minutes'), NULL, 1200, 0, 0, 0, 0)`,
+        )
+        .run().lastInsertRowid,
+    );
+
+    await runScan(makeEnv(db), { trigger: 'cron' }, {
+      createClient: (_t, _o) => makeNoDealClient(),
+    });
+
+    // The live row must NOT have been closed.
+    const after = raw
+      .prepare(`SELECT finished_at FROM scan_runs WHERE id = ?`)
+      .get(liveId) as { finished_at: string | null };
+    expect(after.finished_at).toBeNull();
   });
 });

@@ -7,7 +7,10 @@
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "scan:local": "tsx scripts/scan-local.ts",
+    "bundle:sidecar": "esbuild scripts/scan-local.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/scan-local.cjs --external:better-sqlite3 --log-level=info",
+    "build:sidecar": "node scripts/build-sidecar.mjs"
   },
   "dependencies": {
     "hono": "latest"
@@ -15,10 +18,14 @@
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "latest",
     "@typescript-eslint/eslint-plugin": "latest",
     "@typescript-eslint/parser": "latest",
     "better-sqlite3": "^12.10.0",
+    "esbuild": "^0.28.0",
     "eslint": "latest",
+    "postject": "^1.0.0-alpha.6",
+    "tsx": "latest",
     "typescript": "latest",
     "vitest": "latest",
     "wrangler": "latest"

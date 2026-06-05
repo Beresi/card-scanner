@@ -727,3 +727,65 @@ describe('gap-to-next gate — suppresses tightly-packed ladders', () => {
     expect(result!.secondCheapestCents).toBe(180);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Parser leniency — condition/language absent (real CardTrader API shape)
+//
+// The lenient parsePropertiesHash in types.ts defaults condition/mtg_language
+// to '' when absent. isCondition('') returns false so the listing is silently
+// dropped by the engine's filter — the blueprint is NOT thrown away.
+//
+// These tests verify the engine-level contract: a mixed product array where
+// some listings carry condition='' (as produced by the lenient parser) is
+// handled exactly like an array where those listings had an unrecognised
+// condition string. The blueprint still produces a deal if enough valid
+// listings remain.
+// ---------------------------------------------------------------------------
+
+describe('parser leniency — condition-absent listings silently dropped by the engine', () => {
+  it('drops condition=\'\' listings and still evaluates the valid NM cohort', () => {
+    // Simulate what the lenient parser produces: condition absent → ''
+    const conditionAbsent = makeProduct(1, { condition: '' });
+
+    // 1 cheap candidate + 10 normal-priced NM listings → deal should fire
+    const nmCandidate = makeProduct(16, { condition: 'Near Mint' });
+    const nmCohort = Array.from({ length: 10 }, () =>
+      makeProduct(32, { condition: 'Near Mint' }),
+    );
+
+    const products = [conditionAbsent, nmCandidate, ...nmCohort];
+    // Must not throw. The '' listing is dropped; the blueprint evaluates normally.
+    const result = evaluateBlueprint(products, defaultSettings());
+
+    expect(result).not.toBeNull();
+    // condition-absent listing at 1¢ must NOT be the candidate
+    expect(result!.product.id).not.toBe(conditionAbsent.id);
+    // The NM 16¢ copy is the candidate
+    expect(result!.product.id).toBe(nmCandidate.id);
+    expect(result!.product.price.cents).toBe(16);
+    expect(result!.baselineCents).toBe(32);
+    expect(result!.discountPct).toBe(50);
+  });
+
+  it('returns null (thin market) when ALL listings have condition=\'\' — no crash', () => {
+    const products = Array.from({ length: 20 }, () =>
+      makeProduct(5, { condition: '' }),
+    );
+    // All filtered out → thin market → null, no throw
+    expect(evaluateBlueprint(products, defaultSettings())).toBeNull();
+  });
+
+  it('drops mtg_language=\'\' listings (absent language from the lenient parser)', () => {
+    // Simulate absent mtg_language → '' — not 'en' so the language filter drops it
+    const noLang = makeProduct(1, { mtg_language: '' });
+
+    const nmCandidate = makeProduct(16);
+    const nmCohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint([noLang, nmCandidate, ...nmCohort], defaultSettings());
+
+    expect(result).not.toBeNull();
+    expect(result!.product.id).not.toBe(noLang.id);
+    expect(result!.product.id).toBe(nmCandidate.id);
+  });
+});

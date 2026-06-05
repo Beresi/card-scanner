@@ -28,12 +28,26 @@ import { ago, pct, usd } from '../../lib/format';
 import {
   selectTelemetry,
 } from '../../mock/selectors';
-import { MiniRadar } from './MiniRadar';
+import { MiniRadar }          from './MiniRadar';
+import { ScanProgressClock }  from './ScanProgressClock';
+
+/** Staleness threshold: if a run has been open with zero blueprints scanned for
+ *  longer than this we consider it dead/orphaned and stop showing the block. */
+const STALL_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
 
 export interface TelemetryProps {
   onScanNow?: () => void;
   scanning?: boolean;
   scanTarget: number;
+  /** Whether local scan credentials are configured on this device. */
+  scanConfigured?: boolean;
+  /**
+   * The run id returned by run_local_scan when the user triggered the scan.
+   * Telemetry shows the SCANNING block ONLY for this specific run — never for
+   * an unrelated cron row that happens to be open.
+   * null = no user-initiated scan in flight → show idle content.
+   */
+  activeLocalRunId?: number | null;
   className?: string;
 }
 
@@ -68,12 +82,15 @@ export function Telemetry({
   onScanNow,
   scanning = false,
   scanTarget,
+  scanConfigured = false,
+  activeLocalRunId = null,
   className,
 }: TelemetryProps) {
   // Fetch all deals (dismissed + open) for the histogram and activity log.
   // Empty arrays while loading so the selectors still produce valid output.
   const { data: allDeals = [] } = useDeals({ status: 'all' });
-  const { data: runs = [] }     = useScanRuns();
+  // Pass activeLocalRunId so the hook polls fast only while the user's run is open.
+  const { data: runs = [] }     = useScanRuns(activeLocalRunId);
 
   // Scan mode + progress from health; config for scan_mode fallback.
   const { data: health }  = useHealth();
@@ -89,6 +106,34 @@ export function Telemetry({
   const scanTotal = health?.scan_total ?? 0;
   // active_watch_count: optional field added to health — undefined means unknown.
   const activeWatchCount = health?.active_watch_count;
+
+  // ---------------------------------------------------------------------------
+  // Derive the active run: ONLY show the SCANNING block for the specific run the
+  // user launched (activeLocalRunId), never for a random cron row.
+  //
+  // Rules:
+  //   1. activeLocalRunId must be non-null (a local scan was triggered).
+  //   2. Find that run in the runs list by id.
+  //   3. The run must still be open (finished_at === null).
+  //   4. Staleness guard: if blueprints_scanned === 0 and started_at is older
+  //      than STALL_THRESHOLD_MS, treat the run as dead — hide the block.
+  //      A progressing run (blueprints_scanned > 0) is kept visible regardless
+  //      of elapsed time (a real sweep can run a long time).
+  // ---------------------------------------------------------------------------
+  const activeRun = useMemo(() => {
+    if (activeLocalRunId === null) return null;
+    const run = runs.find((r) => r.id === activeLocalRunId) ?? null;
+    if (!run || run.finished_at !== null) return null;
+    // Staleness guard: open + zero progress + running > 3 min → stalled
+    if (run.blueprints_scanned === 0) {
+      const normalised = /Z|[+-]\d{2}:\d{2}$/.test(run.started_at)
+        ? run.started_at
+        : `${run.started_at}Z`;
+      const startedMs = new Date(normalised).getTime();
+      if (Date.now() - startedMs > STALL_THRESHOLD_MS) return null;
+    }
+    return run;
+  }, [activeLocalRunId, runs]);
 
   // Derive all telemetry stats via the pure selectors (reusable, no mock data).
   const stats = useMemo(
@@ -131,9 +176,72 @@ export function Telemetry({
       <div className="cb-eyebrow tele-sec">scan</div>
 
       <div className="tele-scan cb-bracket">
-        <MiniRadar active={scanning} />
+        <MiniRadar active={scanning || activeRun !== null} />
 
-        {isChunked ? (
+        {activeRun !== null ? (
+          /* ---------------------------------------------------------------- */
+          /* LIVE PROGRESS BLOCK — shown only for the user-triggered run.     */
+          /* activeRun.finished_at === null; useScanRuns polls every 2 s.     */
+          /* ---------------------------------------------------------------- */
+          <div className="tele-scan-info">
+            <Status tone="hot" label="SCANNING" />
+
+            {/* Primary progress: watch items scanned vs total.
+                Clamp the displayed numerator to [0, total] so we never show
+                "X / Y" where X > Y (backend fix in flight, but defend here). */}
+            {(() => {
+              const rawScanned = activeRun.watch_items_scanned;
+              // Only clamp when we know the total; otherwise show raw.
+              const displayScanned =
+                activeWatchCount !== undefined && activeWatchCount > 0
+                  ? Math.min(rawScanned, activeWatchCount)
+                  : rawScanned;
+              return (
+                <span className="cb-eyebrow" style={{ marginTop: 'var(--pad-xs, 4px)' }}>
+                  {displayScanned} / {activeWatchCount ?? '—'} items
+                </span>
+              );
+            })()}
+
+            {/*
+              Progress bar — determinate when active_watch_count is known and > 0,
+              indeterminate (striped/animated) otherwise.
+              Fraction is clamped to [0, 1] so the bar never overflows 100%.
+              Reduced-motion: the indeterminate pulse class is guarded in effects.css
+              behind @media (prefers-reduced-motion: no-preference).
+            */}
+            {activeWatchCount !== undefined && activeWatchCount > 0 ? (
+              <PriceBar
+                value={Math.min(activeRun.watch_items_scanned, activeWatchCount)}
+                max={activeWatchCount}
+                tone="hot"
+                title={`${Math.min(activeRun.watch_items_scanned, activeWatchCount)} of ${activeWatchCount} watch items scanned`}
+              />
+            ) : (
+              /* Indeterminate: unknown total — striped bar at 100% width */
+              <div
+                className="cb-pbar"
+                role="progressbar"
+                aria-label="Scan in progress"
+                aria-valuenow={undefined}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div className="cb-pbar-fill cb-pbar-fill--indeterminate" />
+              </div>
+            )}
+
+            {/* Detail line: blueprints · deals · elapsed */}
+            <span className="cb-mono" style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 'var(--pad-xs, 4px)' }}>
+              {activeRun.blueprints_scanned.toLocaleString()} blueprints
+              {' · '}
+              {activeRun.deals_found} deals
+              {' · '}
+              {/* ScanProgressClock is a leaf — its 1s interval only re-renders this span */}
+              <ScanProgressClock startedAt={activeRun.started_at} />
+            </span>
+          </div>
+        ) : isChunked ? (
           /* ---- CHUNKED mode: progress readout ---- */
           <div className="tele-scan-info">
             <span className="cb-eyebrow">scanning this cycle</span>
@@ -164,11 +272,23 @@ export function Telemetry({
         )}
       </div>
 
+      {/* Gate: disabled + explanatory tooltip when local scan is not configured. */}
       <Btn
         variant="primary"
-        disabled={scanning}
+        disabled={scanning || !scanConfigured}
         onClick={onScanNow}
-        aria-label={scanning ? 'Scan in progress' : 'Run a scan now'}
+        aria-label={
+          scanning
+            ? 'Scan in progress'
+            : !scanConfigured
+            ? 'Local scan is not configured — set it up in Settings → Local Scan'
+            : 'Run a scan now'
+        }
+        title={
+          !scanConfigured
+            ? "Local scan isn't set up on this device — configure it in Settings → Local Scan."
+            : undefined
+        }
         style={{ width: '100%' }}
       >
         <Icon name="radar" size={15} />

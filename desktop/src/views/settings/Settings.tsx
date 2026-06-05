@@ -26,7 +26,7 @@ import { Select }    from '../../components/Select';
 import { Slider }    from '../../components/Slider';
 import { Status }    from '../../components/Status';
 import { Switch }    from '../../components/Switch';
-import { useCatalogProgress, useConfig, useConfigMutation } from '../../api/hooks';
+import { useCatalogProgress, useConfig, useConfigMutation, useLocalScanStatus } from '../../api/hooks';
 import { CONDITION_OPTIONS } from '../../lib/conditions';
 import type {
   Condition,
@@ -241,6 +241,77 @@ function QuietHourInput({ value, label, onChange }: QuietHourProps) {
 }
 
 // ---------------------------------------------------------------------------
+// ScanIntervalInput — integer 1..1440 with inline validation
+// ---------------------------------------------------------------------------
+
+interface ScanIntervalInputProps {
+  value: number;
+  onChange: (v: number) => void;
+}
+
+/**
+ * Controlled input for scan_interval_minutes. Validates 1..1440 inline;
+ * only calls onChange when the value is in range. Mirrors the NumInput/
+ * commit-on-valid-change pattern used by scan_batch_size and cohort_size.
+ */
+function ScanIntervalInput({ value, onChange }: ScanIntervalInputProps) {
+  const [text, setText] = useState(() => String(value));
+  const [error, setError] = useState<string | null>(null);
+
+  // Resync when prop changes externally (e.g. config refetch).
+  useEffect(() => {
+    if (Number(text) !== value) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function handleChange(raw: string) {
+    setText(raw);
+    if (raw.trim() === '') { setError('Required.'); return; }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) { setError('Enter a whole number.'); return; }
+    if (n < 1)    { setError('Minimum is 1 minute.'); return; }
+    if (n > 1440) { setError('Maximum is 1440 minutes (24 hours).'); return; }
+    setError(null);
+    onChange(n);
+  }
+
+  function handleBlur() {
+    // On blur, snap the text back to the last valid committed value.
+    if (error !== null) setText(String(value));
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <input
+          type="number"
+          className="cb-num"
+          style={{ width: 80 }}
+          value={text}
+          min={1}
+          max={1440}
+          step={1}
+          aria-label="Cloud scan interval in minutes"
+          aria-describedby={error ? 'scan-interval-err' : undefined}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleBlur}
+        />
+        <span className="cb-mono" style={{ fontSize: 12, color: 'var(--text-dim)' }}>min</span>
+      </span>
+      {error && (
+        <span
+          id="scan-interval-err"
+          style={{ fontSize: 11, color: 'var(--hot)' }}
+          role="alert"
+        >
+          {error}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
 
@@ -266,6 +337,9 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   const { data: config } = useConfig();
   const cfg = useConfigMutation();
   const { data: catalogProg } = useCatalogProgress();
+
+  // Local scan status — read-only; credentials live in worker/.dev.vars.local.
+  const { data: localScanStatus } = useLocalScanStatus();
 
   // Active tab — ephemeral UI state only.
   const [tab, setTab] = useState<SettingsTab>('appearance');
@@ -629,17 +703,22 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
         );
 
       // ======================================================================
-      // SYSTEM — Scan & data + Maintenance
+      // SYSTEM — Scan & data + Local scan status + Maintenance
       // ======================================================================
-      case 'system':
+      case 'system': {
+        const lsConfigured = localScanStatus?.configured  ?? false;
+        const lsHasTelegram = localScanStatus?.hasTelegram ?? false;
         return (
           <>
             <Panel title="Scan & data" className="set-panel">
-              <Row label="Schedule" hint="read-only · every 2 min tick">
-                <span className="set-cron">
-                  */2 * * * *
-                  <span style={{ color: 'var(--text-faint)', marginLeft: 8 }}>· chunked rotation · UTC</span>
-                </span>
+              <Row
+                label="Cloud scan interval"
+                hint="How often the always-on cloud scan runs. Manual scans ignore this and run immediately. Minimum 1 min."
+              >
+                <ScanIntervalInput
+                  value={c.scan_interval_minutes}
+                  onChange={(v) => cfg.mutate({ scan_interval_minutes: v })}
+                />
               </Row>
 
               <Row
@@ -656,7 +735,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
 
               <Row
                 label="Batch size"
-                hint="cards scanned per 2-min tick (keep ≤49 on the free tier · only applies to chunked)"
+                hint="cards scanned per tick (keep ≤49 on the free tier · only applies to chunked)"
               >
                 <NumInput
                   value={c.scan_batch_size}
@@ -681,6 +760,30 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   suffix="days"
                   aria-label="Deal retention in days"
                 />
+              </Row>
+
+              {/* Local scan status — read-only; credentials live in worker/.dev.vars.local */}
+              <Row label="Local scan" hint="on this device">
+                <span
+                  className="cb-mono"
+                  style={{
+                    fontSize: 12,
+                    color: lsConfigured ? 'var(--good)' : 'var(--text-faint)',
+                  }}
+                  aria-live="polite"
+                >
+                  {lsConfigured
+                    ? `Configured ✓ · Telegram: ${lsHasTelegram ? 'on' : 'off'}`
+                    : 'Not configured'}
+                </span>
+              </Row>
+              <Row label="" hint="">
+                <span className="cb-mono" style={{ fontSize: 11, color: 'var(--text-faint)', maxWidth: 380, lineHeight: 1.5 }}>
+                  Local scan reads credentials from{' '}
+                  <span style={{ color: 'var(--text-dim)' }}>worker/.dev.vars.local</span>{' '}
+                  (reuses your .dev.vars). Add CF_API_TOKEN there; CardTrader + Telegram tokens are reused.
+                  See <span style={{ color: 'var(--text-dim)' }}>docs/documentation/local-scan.md</span>.
+                </span>
               </Row>
             </Panel>
 
@@ -711,6 +814,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             </Panel>
           </>
         );
+      }
     }
   }
 

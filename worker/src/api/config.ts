@@ -51,6 +51,8 @@ const CONFIG_PATCH_FIELDS = [
   'default_max_price_cents',
   'catalog_sync_enabled',
   'catalog_max_exports_per_run',
+  // Configurable scan interval (migration 0011)
+  'scan_interval_minutes',
 ] as const;
 
 // Valid detection modes for the config default.
@@ -148,6 +150,16 @@ configRouter.patch('/', async (c) => {
         return c.json({ error: 'invalid_request' }, 400);
       }
       if (cme > MAX_CATALOG_EXPORTS_PER_RUN) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // scan_interval_minutes: integer 1–1440 (1 minute to 1 day).
+    // Controls the heartbeat gate in scheduled() — how many minutes must elapse
+    // since the last run before the cron fires the next scan.
+    if (body['scan_interval_minutes'] !== undefined) {
+      const sim = body['scan_interval_minutes'];
+      if (!Number.isInteger(sim) || typeof sim !== 'number' || sim < 1 || sim > 1440) {
         return c.json({ error: 'invalid_request' }, 400);
       }
     }

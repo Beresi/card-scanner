@@ -39,6 +39,8 @@ interface PaletteCommand {
   label: string;
   hint?: string;
   icon?: IconName;
+  /** When true the command is shown (greyed) but cannot be run. */
+  disabled?: boolean;
   run: () => void;
 }
 
@@ -51,6 +53,8 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onNavigate: (view: ViewKey) => void;
   onScanNow: () => void;
+  /** Whether local scan credentials are configured on this device. */
+  scanConfigured?: boolean;
   onReplayBoot: () => void;
   onToggleEffects: () => void;
   onJumpToWatch: (id: number) => void;
@@ -87,6 +91,7 @@ export function CommandPalette({
   onClose,
   onNavigate,
   onScanNow,
+  scanConfigured = false,
   onReplayBoot,
   onToggleEffects,
   onJumpToWatch,
@@ -147,9 +152,13 @@ export function CommandPalette({
         id: 'act-scan',
         group: 'Actions',
         label: 'Scan now',
-        hint: 'Trigger an immediate scan run',
+        hint: scanConfigured
+          ? 'Trigger an immediate local scan run'
+          : "Local scan isn't set up on this device — configure it in Settings → Local Scan.",
         icon: 'radar',
+        disabled: !scanConfigured,
         run: () => {
+          if (!scanConfigured) return;
           onScanNow();
           onClose();
         },
@@ -182,7 +191,7 @@ export function CommandPalette({
     }));
 
     return [...navCmds, ...actionCmds, ...watchCmds];
-  }, [watchItems, onNavigate, onScanNow, onClose, onReplayBoot, onToggleEffects, onJumpToWatch]);
+  }, [watchItems, onNavigate, onScanNow, scanConfigured, onClose, onReplayBoot, onToggleEffects, onJumpToWatch]);
 
   // Filtered list
   const filtered = useMemo(
@@ -225,7 +234,7 @@ export function CommandPalette({
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const cmd = filtered[activeIdx];
-        if (cmd) {
+        if (cmd && !cmd.disabled) {
           cmd.run();
           // run() might call onClose internally (scan-now does); for others, close too.
           onClose();
@@ -296,10 +305,14 @@ export function CommandPalette({
                     type="button"
                     role="option"
                     aria-selected={isActive}
+                    aria-disabled={cmd.disabled ? 'true' : undefined}
+                    disabled={cmd.disabled}
+                    title={cmd.disabled ? cmd.hint : undefined}
                     ref={isActive ? (el) => { activeItemRef.current = el; } : undefined}
-                    className={['cmdk-item', isActive ? 'is-active' : ''].filter(Boolean).join(' ')}
+                    className={['cmdk-item', isActive ? 'is-active' : '', cmd.disabled ? 'is-disabled' : ''].filter(Boolean).join(' ')}
                     onMouseEnter={() => setActiveIdx(globalIdx)}
                     onClick={() => {
+                      if (cmd.disabled) return;
                       cmd.run();
                       onClose();
                     }}

@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useConfig, useDeals, useHealth, useRunScan } from './api/hooks';
+import { useConfig, useDeals, useHealth, useLocalScanStatus, useRunLocalScan, useScanRuns } from './api/hooks';
 import { BrandGlyph } from './components/BrandGlyph';
 import { Clock } from './components/Clock';
 import { Icon } from './components/Icon';
@@ -75,9 +75,16 @@ const TITLES: Record<ViewKey, [string, string]> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Next hourly cron tick at the top of the next whole hour from now. */
-function computeNextScanTarget(): number {
-  return Math.ceil(Date.now() / 3_600_000) * 3_600_000;
+/**
+ * Next scan target timestamp.
+ *
+ * intervalMinutes — from config.scan_interval_minutes (default 60).
+ * Rounds up to the nearest whole interval boundary from the Unix epoch so the
+ * countdown aligns with the configured cadence rather than drifting.
+ */
+function computeNextScanTarget(intervalMinutes = 60): number {
+  const intervalMs = intervalMinutes * 60_000;
+  return Math.ceil(Date.now() / intervalMs) * intervalMs;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +137,18 @@ export function App() {
   // ---- Scan state ----
   const [scanning, setScanning]             = useState(false);
   const [nextScanTarget, setNextScanTarget] = useState<number>(computeNextScanTarget);
+  // Tracks the run id returned by run_local_scan so Telemetry shows progress
+  // only for the run the USER triggered (not any random cron row).
+  const [activeLocalRunId, setActiveLocalRunId] = useState<number | null>(null);
+
+  // ---- Keep the next-scan countdown aligned with the configured interval ----
+  // Runs whenever config.scan_interval_minutes changes (e.g. the user just saved
+  // a new value in Settings). Recomputes the target using the fresh interval so
+  // the Clock leaf shows a countdown that matches the real cloud cadence.
+  const scanIntervalMinutes = config?.scan_interval_minutes ?? 60;
+  useEffect(() => {
+    setNextScanTarget(computeNextScanTarget(scanIntervalMinutes));
+  }, [scanIntervalMinutes]);
 
   // ---- Palette ----
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -143,13 +162,51 @@ export function App() {
   // ---- Watchlist selection (ephemeral store — drives the right rail) ----
   const { selectedId } = useWatchSelection();
 
-  // ---- Real deals: high-priority for scan-complete toasts; open for the nav badge ----
-  const { data: priorityDeals = [] } = useDeals({ status: 'open', priority: 'high' });
-  const { data: openDeals = [] }     = useDeals({ status: 'open' });
+  // ---- Real deals: open for the nav badge ----
+  const { data: openDeals = [] } = useDeals({ status: 'open' });
   const unseenCount = openDeals.filter((d) => d.seen === 0).length;
 
-  // ---- Scan-now mutation ----
-  const runScan = useRunScan();
+  // ---- Local scan status — gates the Scan Now button ----
+  const { data: localScanStatus } = useLocalScanStatus();
+  const localScanConfigured = localScanStatus?.configured ?? false;
+
+  // ---- Local scan mutation ----
+  const runLocalScan = useRunLocalScan();
+
+  // ---- Scan runs — watch for the user-triggered run closing ----
+  // Pass activeLocalRunId so the hook polls fast only while our run is open.
+  const { data: scanRuns = [] } = useScanRuns(activeLocalRunId);
+
+  // When the tracked run closes or stalls, clear activeLocalRunId so Telemetry
+  // returns to idle and useScanRuns backs off to slow polling.
+  //
+  // Clear conditions (mirror the staleness guard in Telemetry):
+  //   a) The run's finished_at became non-null (scan completed normally).
+  //   b) The run has been open for >3 min with blueprints_scanned === 0
+  //      (sidecar died before doing any work — stalled).
+  //   c) The run id is not found in the list yet but activeLocalRunId was set
+  //      more than 3 min ago — handles the case where run_local_scan returned
+  //      a runId that never appeared in scan_runs (e.g. worker restart).
+  useEffect(() => {
+    if (activeLocalRunId === null) return;
+    const STALL_MS = 3 * 60 * 1000;
+    const run = scanRuns.find((r) => r.id === activeLocalRunId);
+    if (!run) return; // not in list yet — wait for the next poll
+    if (run.finished_at !== null) {
+      setActiveLocalRunId(null);
+      return;
+    }
+    // Staleness guard: open + zero blueprints + running > 3 min
+    if (run.blueprints_scanned === 0) {
+      const normalised = /Z|[+-]\d{2}:\d{2}$/.test(run.started_at)
+        ? run.started_at
+        : `${run.started_at}Z`;
+      const startedMs = new Date(normalised).getTime();
+      if (Date.now() - startedMs > STALL_MS) {
+        setActiveLocalRunId(null);
+      }
+    }
+  }, [activeLocalRunId, scanRuns]);
 
   // ---- Global ⌘K / Ctrl+K hotkey ----
   useEffect(() => {
@@ -164,39 +221,55 @@ export function App() {
   }, []);
 
   // ---- Scan flow ----
+  // startScan fires the LOCAL sidecar scan (detached). The overlay animation
+  // plays while the sidecar launches; completion means "started", not "finished".
+  // If the sidecar call throws (not configured, sidecar crash), we close the
+  // overlay and push an error toast instead of leaving it stuck.
   const startScan = useCallback(() => {
     if (scanning) return;
+    if (!localScanConfigured) return; // gate: button should already be disabled
     setScanning(true);
-    // Fire the real run-now mutation; cache invalidation happens in onSuccess.
-    // The animation overlay runs ~3.6s regardless; the refetch lands when it lands.
-    runScan.mutate();
-  }, [scanning, runScan]);
+    runLocalScan.mutate(undefined, {
+      onSuccess: (result) => {
+        // Capture the run id so Telemetry tracks THIS specific run.
+        // runId may be null if the sidecar hadn't emitted the started line yet
+        // (rare race); in that case activeLocalRunId stays null and the block
+        // won't show — acceptable graceful degradation for that edge case.
+        if (result.runId !== null) {
+          setActiveLocalRunId(result.runId);
+        }
+        // Cache invalidation (scanRuns, health) also happens inside the mutation hook.
+      },
+      onError: (err) => {
+        // Sidecar failed to start — close overlay and surface the error.
+        setScanning(false);
+        push({
+          title: 'Scan failed to start',
+          sub: err.message,
+          tone: 'hot',
+          icon: 'x',
+        });
+      },
+    });
+    // The overlay timer runs independently; onScanComplete fires when it finishes.
+  }, [scanning, localScanConfigured, runLocalScan, push]);
 
+  // onScanComplete fires when the overlay animation finishes (~3.6s after startScan).
+  // At that point the sidecar is still running in the background — the overlay
+  // completing does NOT mean the scan is done. Show a "started" toast instead
+  // of a "complete" one, and point the user to Health for progress.
   const onScanComplete = useCallback(() => {
     setScanning(false);
-    setNextScanTarget(computeNextScanTarget());
+    setNextScanTarget(computeNextScanTarget(scanIntervalMinutes));
     setView('feed');
 
-    // Push 1–2 toasts from high-priority open deals (refetched by mutation onSuccess)
-    const topDeals = priorityDeals.slice(0, 2);
-    if (topDeals.length === 0) {
-      push({
-        title: 'Scan complete',
-        sub: 'No new high-priority deals.',
-        tone: 'accent',
-        icon: 'radar',
-      });
-    } else {
-      topDeals.forEach((deal) => {
-        push({
-          title: `PRIORITY · ${deal.card_name}`,
-          sub: `−${deal.discount_pct}% · ${deal.expansion_name ?? ''}`,
-          tone: 'hot',
-          icon: 'bolt',
-        });
-      });
-    }
-  }, [priorityDeals, push]);
+    push({
+      title: 'Local scan started',
+      sub: 'Running in the background. Progress appears in Health.',
+      tone: 'accent',
+      icon: 'radar',
+    });
+  }, [push, scanIntervalMinutes]);
 
   // ---- Replay boot ----
   const onReplayBoot = useCallback(() => {
@@ -236,9 +309,11 @@ export function App() {
         onScanNow={startScan}
         scanning={scanning}
         scanTarget={nextScanTarget}
+        scanConfigured={localScanConfigured}
+        activeLocalRunId={activeLocalRunId}
       />
     );
-  }, [view, selectedId, scanning, nextScanTarget, startScan]);
+  }, [view, selectedId, scanning, nextScanTarget, startScan, localScanConfigured, activeLocalRunId]);
 
   // ---- Boot gate: render BootSequence instead of shell ----
   if (!booted) {
@@ -393,6 +468,7 @@ export function App() {
           setPaletteOpen(false);
           startScan();
         }}
+        scanConfigured={localScanConfigured}
         onReplayBoot={() => {
           onReplayBoot();
           setPaletteOpen(false);

@@ -61,6 +61,8 @@ const BASE_CONFIG: ConfigRow = {
   default_max_price_cents: null,
   catalog_sync_enabled: 0,
   catalog_max_exports_per_run: 1,
+  // Migration 0011 addition
+  scan_interval_minutes: 60,
   updated_at: '2025-01-01T00:00:00Z',
 };
 

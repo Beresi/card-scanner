@@ -110,6 +110,8 @@ export interface Config {
   // Scan mode
   scan_mode: ScanMode;
   scan_batch_size: number;
+  // How often the always-on cloud cron scan runs (1..1440 minutes; default 60).
+  scan_interval_minutes: number;
 
   // Detection mode defaults (§9a inheritable per-ticket)
   default_detection_mode: DetectionMode;

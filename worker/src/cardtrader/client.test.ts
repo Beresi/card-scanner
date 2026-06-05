@@ -409,3 +409,171 @@ describe('blueprintsExport()', () => {
     expect(captured[0]).toContain('expansion_id=999');
   });
 });
+
+// ---------------------------------------------------------------------------
+// parseMarketplaceResponse — per-listing leniency
+//
+// Real CardTrader products sometimes omit properties_hash.condition (and
+// mtg_language). A single malformed listing must drop itself rather than
+// discarding the whole blueprint's cohort.
+// ---------------------------------------------------------------------------
+
+/** Minimal well-formed marketplace product wire object. */
+function rawProduct(
+  blueprintId: number,
+  productId: number,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: productId,
+    blueprint_id: blueprintId,
+    name_en: 'Test Card',
+    quantity: 1,
+    price: { cents: 32, currency: 'EUR' },
+    properties_hash: {
+      condition: 'Near Mint',
+      mtg_language: 'en',
+      mtg_foil: false,
+    },
+    graded: false,
+    on_vacation: false,
+    ...overrides,
+  };
+}
+
+describe('marketplaceProducts() — per-listing leniency (condition absent)', () => {
+  // condition absent from properties_hash:
+  //   The lenient parsePropertiesHash defaults condition to '' (not a throw).
+  //   The listing survives parsing; the deal engine's isCondition('') filter
+  //   then drops it from the qualifying cohort — correct separation of concerns.
+  it('parses without throwing when properties_hash.condition is absent — condition defaults to \'\'', async () => {
+    const fakeFetch = vi.fn(async () =>
+      jsonResponse({
+        '10050': [
+          // Missing condition — must NOT throw; condition becomes ''.
+          rawProduct(10050, 1, {
+            properties_hash: { mtg_language: 'en', mtg_foil: false }, // condition absent
+          }),
+          // Well-formed sibling.
+          rawProduct(10050, 2),
+        ],
+      }),
+    );
+
+    const client = createCardTraderClient(TEST_TOKEN, {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      minIntervalMs: 0,
+    });
+
+    // Must not throw — the blueprint must parse successfully.
+    const result = await client.marketplaceProducts({ blueprintId: 10050, language: 'en' });
+
+    // Both listings survive the parser (the absent condition becomes '').
+    expect(result['10050']).toHaveLength(2);
+    // The listing with absent condition has condition === '' so the deal engine can drop it.
+    expect(result['10050'][0].properties_hash.condition).toBe('');
+    // The well-formed sibling's condition is intact.
+    expect(result['10050'][1].properties_hash.condition).toBe('Near Mint');
+  });
+
+  it('all listings with absent condition survive parsing — engine will return null on thin/condition-less market', async () => {
+    const fakeFetch = vi.fn(async () =>
+      jsonResponse({
+        '10050': [
+          rawProduct(10050, 1, {
+            properties_hash: { mtg_language: 'en', mtg_foil: false }, // condition absent → ''
+          }),
+          rawProduct(10050, 2, {
+            properties_hash: { mtg_language: 'en', mtg_foil: false }, // condition absent → ''
+          }),
+        ],
+      }),
+    );
+
+    const client = createCardTraderClient(TEST_TOKEN, {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      minIntervalMs: 0,
+    });
+
+    const result = await client.marketplaceProducts({ blueprintId: 10050, language: 'en' });
+
+    // Both listings survive the parser with condition=''.
+    // The deal engine will see 0 qualifying copies (isCondition('') = false) → null.
+    expect(result['10050']).toHaveLength(2);
+    expect(result['10050'].every((p) => p.properties_hash.condition === '')).toBe(true);
+  });
+
+  it('drops a listing missing price_cents (structural failure) and retains siblings', async () => {
+    // price.cents is required — a listing without it is useless (no comparable price).
+    // parseProduct throws for missing cents → per-listing catch drops it.
+    const fakeFetch = vi.fn(async () =>
+      jsonResponse({
+        '10050': [
+          // price object missing cents — parsePrice → requireInteger throws → listing dropped.
+          rawProduct(10050, 1, { price: { currency: 'EUR' } }), // cents absent
+          // Well-formed sibling must survive.
+          rawProduct(10050, 2),
+        ],
+      }),
+    );
+
+    const client = createCardTraderClient(TEST_TOKEN, {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      minIntervalMs: 0,
+    });
+
+    const result = await client.marketplaceProducts({ blueprintId: 10050, language: 'en' });
+
+    // Only the well-formed listing survives.
+    expect(result['10050']).toHaveLength(1);
+    expect(result['10050'][0].id).toBe(2);
+  });
+
+  it('retains a listing with absent mtg_foil — foil defaults to false', async () => {
+    const fakeFetch = vi.fn(async () =>
+      jsonResponse({
+        '10050': [
+          rawProduct(10050, 1, {
+            properties_hash: { condition: 'Near Mint', mtg_language: 'en' }, // mtg_foil absent
+          }),
+        ],
+      }),
+    );
+
+    const client = createCardTraderClient(TEST_TOKEN, {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      minIntervalMs: 0,
+    });
+
+    const result = await client.marketplaceProducts({ blueprintId: 10050, language: 'en' });
+
+    // Listing survives — foil defaults to false (nonfoil assumption is conservative).
+    expect(result['10050']).toHaveLength(1);
+    expect(result['10050'][0].properties_hash.mtg_foil).toBe(false);
+  });
+
+  it('drops a listing where properties_hash is entirely absent (null/undefined) — retains siblings', async () => {
+    // properties_hash missing entirely → parsePropertiesHash throws on "expected an object"
+    // → per-listing catch drops it.
+    const fakeFetch = vi.fn(async () =>
+      jsonResponse({
+        '10050': [
+          // properties_hash entirely absent — structural error, can't leniently default an object.
+          rawProduct(10050, 1, { properties_hash: undefined }),
+          // Well-formed sibling survives.
+          rawProduct(10050, 2),
+        ],
+      }),
+    );
+
+    const client = createCardTraderClient(TEST_TOKEN, {
+      fetchImpl: fakeFetch as unknown as typeof fetch,
+      minIntervalMs: 0,
+    });
+
+    const result = await client.marketplaceProducts({ blueprintId: 10050, language: 'en' });
+
+    expect(result['10050']).toHaveLength(1);
+    expect(result['10050'][0].id).toBe(2);
+  });
+});

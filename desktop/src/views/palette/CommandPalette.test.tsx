@@ -37,8 +37,20 @@ vi.mock('../../api/client', () => ({
   runScanNow:   vi.fn(),
 }));
 
+// Stub Tauri — include the local scan commands so localScan.ts doesn't throw.
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn().mockResolvedValue(undefined),
+  invoke: vi.fn().mockImplementation((cmd: string) => {
+    if (cmd === 'get_local_scan_status') {
+      return Promise.resolve({ configured: true, hasTelegram: false });
+    }
+    if (cmd === 'local_scan_available') {
+      return Promise.resolve(true);
+    }
+    if (cmd === 'run_local_scan') {
+      return Promise.resolve({ started: true, runId: 1 });
+    }
+    return Promise.resolve(undefined);
+  }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -106,6 +118,8 @@ function makeProps(overrides: Partial<CommandPaletteProps> = {}): CommandPalette
     onClose:         vi.fn(),
     onNavigate:      vi.fn(),
     onScanNow:       vi.fn(),
+    // Default to configured=true so existing tests that exercise Scan Now still work.
+    scanConfigured:  true,
     onReplayBoot:    vi.fn(),
     onToggleEffects: vi.fn(),
     onJumpToWatch:   vi.fn(),

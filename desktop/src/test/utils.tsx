@@ -75,6 +75,7 @@ export const FIXTURE_CONFIG: Config = {
   density: 'comfortable',
   scan_mode: 'chunked',
   scan_batch_size: 40,
+  scan_interval_minutes: 60,
   default_detection_mode: 'discount',
   default_max_price_cents: null,
   catalog_sync_enabled: 0,

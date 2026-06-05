@@ -150,6 +150,11 @@ export interface ConfigRow {
   catalog_sync_enabled: 0 | 1;            // NOT NULL DEFAULT 0
   catalog_max_exports_per_run: number;     // NOT NULL DEFAULT 1
 
+  // Configurable scan interval (migration 0011)
+  // The Worker runs a 1-minute heartbeat cron; scheduled() skips ticks until
+  // this many minutes have elapsed since the last run. Range 1–1440.
+  scan_interval_minutes: number;           // NOT NULL DEFAULT 60 — cron heartbeat gate (migration 0011)
+
   updated_at: string;                      // UTC TEXT, datetime('now')
 }
 

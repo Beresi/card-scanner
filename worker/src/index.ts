@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { runScan } from './scan/scanner';
+import { shouldRunCron } from './scan/cronGate';
 import { scanRouter } from './api/scan';
 import { telegramRouter } from './api/telegram';
 import { configRouter } from './api/config';
@@ -12,6 +13,7 @@ import { catalogRouter } from './api/catalog';
 import {
   getLatestScanRun,
   getConfig,
+  reapStaleScanRuns,
   listActiveWatchlist,
   countActiveExpansionBlueprints,
   countActiveCardBlueprints,
@@ -196,10 +198,39 @@ export default {
   // HTTP API — all requests routed through the Hono app above.
   fetch: app.fetch,
 
-  // Hourly cron handler (wrangler.toml: crons = ["0 * * * *"], UTC).
-  // Shares the exact same runScan entry point as POST /api/scan/run-now — no forked logic
-  // (PRD §4/§11).  ctx.waitUntil keeps the isolate alive for the full async scan.
+  // 1-minute heartbeat cron handler (wrangler.toml: crons = ["* * * * *"], UTC).
+  // The scan cadence is stored in config.scan_interval_minutes (default 60) so the
+  // owner can change it without a redeploy. On each tick, shouldRunCron() checks how
+  // many minutes have elapsed since the last scan started; if less than the configured
+  // interval, this tick is silently skipped and NO scan_runs row is opened.
+  //
+  // POST /api/scan/run-now and the local sidecar (trigger:'run-now') always call
+  // runScan directly — they are never gated. The gate is ONLY on the cron path.
+  //
+  // ctx.waitUntil keeps the isolate alive for the full async work.
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runScan(env, { trigger: 'cron' }));
+    ctx.waitUntil((async () => {
+      try {
+        // Reap on EVERY heartbeat (not just inside runScan) — the interval gate
+        // below skips runScan for up to scan_interval_minutes, so a cron run that
+        // was hard-killed mid-scan (no finally → finished_at stays NULL) would
+        // otherwise linger as "RUNNING" for a full interval. A 3-min staleness
+        // bar with the blueprints_scanned=0 guard closes dead rows fast and can
+        // never reap a progressing scan (which has blueprints_scanned > 0 within
+        // seconds). Non-fatal: failures here must not block the gate/scan.
+        try { await reapStaleScanRuns(env.DB, 3); } catch (re) {
+          console.error('[scheduled] reap failed', re instanceof Error ? re.message : String(re));
+        }
+
+        const config = await getConfig(env.DB);
+        const latest = await getLatestScanRun(env.DB); // newest run (any status)
+        if (!shouldRunCron(latest?.started_at ?? null, config.scan_interval_minutes, Date.now())) {
+          return; // too soon — skip silently, no scan_runs row opened
+        }
+        await runScan(env, { trigger: 'cron' });
+      } catch (e) {
+        console.error('[scheduled] gate/scan failed', e instanceof Error ? e.message : String(e));
+      }
+    })());
   },
 } satisfies ExportedHandler<Env>;

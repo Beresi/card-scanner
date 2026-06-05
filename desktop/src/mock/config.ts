@@ -41,6 +41,7 @@ export const MOCK_CONFIG: Config = {
   // Scan mode
   scan_mode: 'chunked',
   scan_batch_size: 40,
+  scan_interval_minutes: 60,
 
   // Detection mode defaults
   default_detection_mode: 'discount',

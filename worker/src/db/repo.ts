@@ -55,6 +55,87 @@ export async function openScanRun(db: D1Database): Promise<number> {
 }
 
 /**
+ * Write live progress counters to an open scan_runs row.
+ *
+ * Called periodically DURING a local deep-sweep scan so the frontend can
+ * display "X / Y scanned" instead of waiting for closeScanRun at the end.
+ *
+ * The `finished_at IS NULL` guard prevents clobbering a row that has already
+ * been closed (belt-and-suspenders — the scanner always calls this before
+ * closeScanRun, but guard defensively).
+ *
+ * Does NOT touch `finished_at`, `telegram_sent`, or `error` — those are
+ * owned by closeScanRun, which remains the authoritative final write.
+ *
+ * Used ONLY by the local sidecar scan (liveProgress: true). The cloud cron
+ * and cloud run-now paths never set that flag, so this function is never
+ * called in those paths — ZERO extra writes for the cloud paths.
+ */
+export async function updateScanRunProgress(
+  db: D1Database,
+  runId: number,
+  counts: {
+    watchItemsScanned: number;
+    blueprintsScanned: number;
+    apiCalls: number;
+    dealsFound: number;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE scan_runs
+          SET watch_items_scanned = ?,
+              blueprints_scanned  = ?,
+              api_calls           = ?,
+              deals_found         = ?
+        WHERE id = ?
+          AND finished_at IS NULL`,
+    )
+    .bind(
+      counts.watchItemsScanned,
+      counts.blueprintsScanned,
+      counts.apiCalls,
+      counts.dealsFound,
+      runId,
+    )
+    .run();
+}
+
+/**
+ * Reap stale/abandoned scan_runs rows.
+ *
+ * An orphaned row is one where `finished_at IS NULL` AND `started_at` is older
+ * than `olderThanMinutes` AND `blueprints_scanned = 0`.  The zero-progress
+ * guard is critical: a long-running local sweep that has genuinely scanned
+ * many blueprints must NOT be reaped even if it has been running for more than
+ * the threshold.  A row that has never made any progress after 15 minutes is
+ * definitively dead (killed by the platform or crashed before scanning).
+ *
+ * Called once at the very start of runScan so every new run first closes any
+ * abandoned predecessors.  Returns the number of rows closed.
+ *
+ * Safe to call from both cron and local-run paths — pure cleanup, no side effects.
+ */
+export async function reapStaleScanRuns(
+  db: D1Database,
+  olderThanMinutes = 15,
+): Promise<number> {
+  const interval = `-${olderThanMinutes} minutes`;
+  const res = await db
+    .prepare(
+      `UPDATE scan_runs
+          SET finished_at = datetime('now'),
+              error       = COALESCE(error, 'auto-closed: stale/abandoned run')
+        WHERE finished_at IS NULL
+          AND started_at < datetime('now', ?)
+          AND blueprints_scanned = 0`,
+    )
+    .bind(interval)
+    .run();
+  return res.meta.changes ?? 0;
+}
+
+/**
  * Close a scan run row.
  *
  * Writes `finished_at`, all five `ScanCounts` fields, and `error` (null on a
@@ -451,6 +532,8 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   'default_max_price_cents',
   'catalog_sync_enabled',
   'catalog_max_exports_per_run',
+  // Configurable scan interval (migration 0011)
+  'scan_interval_minutes',
 ]);
 
 /**
@@ -1178,8 +1261,8 @@ export async function markBlueprintsScanned(
  *  - No scans have ever run.
  *  - No scan has finished yet (all rows have `finished_at IS NULL`).
  *
- * Used by the wholeset self-throttle: if the last finished scan was less than
- * ~55 minutes ago AND the trigger is 'cron', the run is skipped.
+ * Previously used by the wholeset self-throttle (removed in migration 0011).
+ * Kept in repo.ts for potential future use; no longer called by scanner.ts.
  */
 export async function getLatestFinishedScanAt(db: D1Database): Promise<string | null> {
   const row = await db

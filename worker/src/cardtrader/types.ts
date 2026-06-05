@@ -290,9 +290,23 @@ export function parseMarketplaceResponse(raw: unknown): MarketplaceResponse {
         '/marketplace/products',
       );
     }
-    result[key] = value.map((item, index) =>
-      parseProduct(item, `/marketplace/products`, key, index),
-    );
+
+    // Parse each listing defensively: one malformed product must not discard
+    // the entire blueprint's cohort. Collect the well-formed ones; warn on drops.
+    const good: Product[] = [];
+    let dropped = 0;
+    for (let index = 0; index < value.length; index++) {
+      try {
+        good.push(parseProduct(value[index], `/marketplace/products`, key, index));
+      } catch {
+        dropped++;
+      }
+    }
+    if (dropped > 0) {
+      // Log count + blueprint key — never the raw payload (may contain seller data).
+      console.warn(`[cardtrader] dropped ${dropped} malformed listing(s) for blueprint ${key}`);
+    }
+    result[key] = good;
   }
 
   return result;
@@ -461,11 +475,22 @@ function parsePropertiesHash(raw: unknown, ctx: string, endpoint: string): Prope
     throw new CardTraderError(`${ctx}: expected an object`, endpoint);
   }
   const p = raw as Record<string, unknown>;
-  return {
-    condition: requireString(p['condition'], ctx + '.condition', endpoint),
-    mtg_language: requireString(p['mtg_language'], ctx + '.mtg_language', endpoint),
-    mtg_foil: requireBoolean(p['mtg_foil'], ctx + '.mtg_foil', endpoint),
-  };
+
+  // condition and mtg_language: lenient — absent / non-string → '' so the deal
+  // engine's isCondition('') guard drops the listing rather than crashing the
+  // blueprint. This is the right behaviour: we cannot verify min_condition for
+  // a listing whose condition is unknown, so we must exclude it.
+  const condition = typeof p['condition'] === 'string' ? p['condition'] : '';
+  const mtg_language = typeof p['mtg_language'] === 'string' ? p['mtg_language'] : '';
+
+  // mtg_foil: lenient — absent / non-boolean → false (nonfoil) so an otherwise
+  // valid listing survives to the deal engine's foil filter. Defaulting to false
+  // is conservative: a nonfoil default means we never falsely surface a foil
+  // copy to a nonfoil-preferring buyer; a foil buyer may miss it, but that is
+  // safer than dropping the whole blueprint.
+  const mtg_foil = typeof p['mtg_foil'] === 'boolean' ? p['mtg_foil'] : false;
+
+  return { condition, mtg_language, mtg_foil };
 }
 
 function parseProductExpansion(raw: unknown, ctx: string, endpoint: string): ProductExpansion {

@@ -21,6 +21,11 @@ import {
   resetWatchField,
   runScanNow,
 } from './client';
+import {
+  getLocalScanStatus,
+  runLocalScan,
+} from './localScan';
+import type { LocalScanStatus } from './localScan';
 import type { Cart, CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
 
 // ---------------------------------------------------------------------------
@@ -147,14 +152,27 @@ export function useHealth() {
 /**
  * useScanRuns — fetches the scan run log (newest first, ≤20 rows).
  *
- * Used by the Health view's scan history table.
+ * Used by the Health view's scan history table and the Telemetry rail's live
+ * scan-progress block.
+ *
+ * Dynamic polling:
+ *   - When `activeLocalRunId` is non-null the interval drops to 2 s so live
+ *     counter updates for the user-triggered run feel immediate.
+ *   - When no local run is being tracked we back off to 30 s, regardless of
+ *     whether some cron row happens to be open. This prevents fast-polling
+ *     forever whenever an orphaned cron row lands.
  */
-export function useScanRuns() {
+export function useScanRuns(activeLocalRunId: number | null = null) {
   return useQuery<ScanRun[], Error>({
     queryKey: ['scanRuns'] as const,
     queryFn: getScanRuns,
-    // Poll so the Health view's run log + counts refresh as the cron ticks.
-    refetchInterval: 30_000,
+    refetchInterval: () => {
+      // Poll fast only while the user has an in-flight local scan.
+      if (activeLocalRunId !== null) {
+        return 2_000;
+      }
+      return 30_000; // idle — back off to reduce Worker load
+    },
     staleTime: 0,
   });
 }
@@ -379,6 +397,51 @@ export function useCartRemove() {
     mutationFn: ({ productId, quantity }) => cartRemove(productId, quantity),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['cart'] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Local scan hooks (Tauri sidecar — device-local, not cloud)
+// ---------------------------------------------------------------------------
+
+/**
+ * useLocalScanStatus — queries whether local scan credentials are configured
+ * on this device.
+ *
+ * Device-local data (not cloud server state), but Query is correct here for
+ * caching and cross-component consistency. staleTime of 30s is generous since
+ * status only changes when the user saves new credentials in Settings.
+ *
+ * Falls back to { configured: false, hasTelegram: false } if the Tauri host
+ * is unavailable (plain browser dev session) — never throws.
+ */
+export function useLocalScanStatus() {
+  return useQuery<LocalScanStatus, Error>({
+    queryKey: ['localScanStatus'] as const,
+    queryFn: getLocalScanStatus,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * useRunLocalScan — fires the local sidecar scan (detached).
+ *
+ * Returns once the sidecar emits its "started" event — the scan continues
+ * running in the background. Invalidates ['scanRuns'] and ['health'] on
+ * success so the Health view shows the in-progress run immediately.
+ *
+ * Does NOT invalidate ['deals'] here — the sweep may take minutes; results
+ * surface naturally as the scan_runs polling (Health) and deal-feed polling
+ * pick them up.
+ */
+export function useRunLocalScan() {
+  const qc = useQueryClient();
+  return useMutation<{ started: boolean; runId: number | null }, Error, void>({
+    mutationFn: () => runLocalScan(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['scanRuns'] });
+      void qc.invalidateQueries({ queryKey: ['health'] });
     },
   });
 }

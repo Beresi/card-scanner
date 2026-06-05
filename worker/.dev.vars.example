@@ -23,3 +23,26 @@ TELEGRAM_CHAT_ID=REPLACE_WITH_CHAT_ID
 # Generate a strong random string (e.g. `openssl rand -hex 32`) and store it
 # in the desktop app's OS-backed secure storage. Set the same value here for dev.
 DESKTOP_AUTH_TOKEN=REPLACE_WITH_STRONG_RANDOM_TOKEN
+
+# ---------------------------------------------------------------------------
+# Keys used ONLY by the local deep-sweep CLI (npm run scan:local).
+# These are NOT read by the Cloudflare Worker at runtime.
+#
+# CARDTRADER_API_TOKEN and TELEGRAM_* above are reused automatically — no
+# duplication needed. CF_ACCOUNT_ID and CF_D1_DATABASE_ID are baked constants
+# (matching wrangler.toml) and do NOT need to be set; override here only if
+# you have multiple Cloudflare accounts or databases.
+#
+# To run the local CLI, copy this file to .dev.vars.local and add CF_API_TOKEN:
+# ---------------------------------------------------------------------------
+
+# Cloudflare API token scoped to "D1 Edit" on this account/database only.
+# Create at: https://dash.cloudflare.com/profile/api-tokens
+# → "Create Token" → Custom token → Permissions: Account / D1 / Edit
+# → Account Resources: Include / <your account>
+# HIGH SENSITIVITY — treat like a production credential. Never commit this value.
+CF_API_TOKEN=REPLACE_WITH_CLOUDFLARE_API_TOKEN
+
+# --- Optional overrides (baked defaults match wrangler.toml; set only to override) ---
+# CF_ACCOUNT_ID=541d9063453516ba295a2c1cbf298129
+# CF_D1_DATABASE_ID=32265ad6-4e1d-4ef8-8086-899962fcdb1f

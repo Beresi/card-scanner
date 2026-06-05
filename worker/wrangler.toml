@@ -3,17 +3,18 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
 # ---------------------------------------------------------------------------
-# Cron trigger — every 2 minutes.
+# Cron trigger — 1-minute HEARTBEAT (do not change for cadence).
 #
-# Chunked mode (default) scans a rotating batch of ~40 individual blueprints
-# per tick, so frequent ticks are needed for throughput across large sets.
-# Wholeset mode self-throttles: a cron tick that fires within ~55 min of the
-# last finished scan is skipped with no error, so the effective cadence stays
-# ~hourly even at a 2-min cron interval.
-# run-now (POST /api/scan/run-now) always runs regardless of mode or interval.
+# The actual scan cadence is owner-configurable at runtime via
+# config.scan_interval_minutes (Settings → System → "Cloud scan interval"),
+# because Cloudflare cron schedules cannot be reprogrammed at runtime. This
+# fixed 1-min heartbeat is gated in scheduled(): shouldRunCron() skips a tick
+# (opening NO scan_runs row) until scan_interval_minutes have elapsed since the
+# last run. To change how often scans run, edit the config value, NOT this cron.
+# run-now (POST /api/scan/run-now) + the local sidecar always run, ungated.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["* * * * *"]
 
 # ---------------------------------------------------------------------------
 # D1 database binding.

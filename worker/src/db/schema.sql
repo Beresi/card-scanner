@@ -179,6 +179,13 @@ CREATE TABLE IF NOT EXISTS config (
   -- catalog_max_exports_per_run: blueprintsExport calls per tick; keep ≤ free-tier cap.
   catalog_max_exports_per_run   INTEGER NOT NULL DEFAULT 1,
 
+  -- Configurable scan interval (migration 0011).
+  -- The Worker runs a 1-minute heartbeat cron; this column controls how many
+  -- minutes must elapse since the last run before another scan fires.
+  -- Changing the cadence is pure config — no wrangler.toml redeploy needed.
+  -- Valid range: 1–1440. API PATCH enforces bounds.
+  scan_interval_minutes         INTEGER NOT NULL DEFAULT 60,
+
   updated_at                    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

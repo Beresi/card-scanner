@@ -4,4 +4,5 @@ dist/
 
 # Local dev secrets — never commit; real values set via `wrangler secret put`
 .dev.vars
+.dev.vars.local
 *.log
