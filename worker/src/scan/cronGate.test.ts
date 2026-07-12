@@ -14,13 +14,18 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { shouldRunCron } from './cronGate';
+import { shouldRunCron, shouldRunMaintenance, MAINTENANCE_INTERVAL_HOURS } from './cronGate';
 
 /** Build a UTC SQLite datetime string (without 'Z') offset by `deltaMinutes`. */
 function isoMinsAgo(nowMs: number, deltaMinutes: number): string {
   const ms = nowMs - deltaMinutes * 60_000;
   // Produce "YYYY-MM-DD HH:MM:SS" (SQLite datetime('now') format, no 'Z').
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+/** Build a UTC SQLite datetime string (without 'Z') offset by `deltaHours`. */
+function isoHoursAgo(nowMs: number, deltaHours: number): string {
+  return isoMinsAgo(nowMs, deltaHours * 60);
 }
 
 const NOW = Date.UTC(2026, 4, 1, 12, 0, 0); // fixed reference point
@@ -98,5 +103,31 @@ describe('shouldRunCron — minimum interval (1 minute)', () => {
   it('returns true at exactly 1 minute elapsed with 1-minute interval', () => {
     const last = isoMinsAgo(NOW, 1);
     expect(shouldRunCron(last, 1, NOW)).toBe(true);
+  });
+});
+
+describe('shouldRunMaintenance — daily gate (migration 0013)', () => {
+  it('returns true when last_maintenance_at is null (never run)', () => {
+    expect(shouldRunMaintenance(null, NOW)).toBe(true);
+  });
+
+  it('returns false when < 24h elapsed (12h ago)', () => {
+    const last = isoHoursAgo(NOW, 12);
+    expect(shouldRunMaintenance(last, NOW)).toBe(false);
+  });
+
+  it('returns false at 23h59m elapsed (just under the window)', () => {
+    const last = isoMinsAgo(NOW, MAINTENANCE_INTERVAL_HOURS * 60 - 1);
+    expect(shouldRunMaintenance(last, NOW)).toBe(false);
+  });
+
+  it('returns true at exactly 24h elapsed (boundary inclusive)', () => {
+    const last = isoHoursAgo(NOW, MAINTENANCE_INTERVAL_HOURS);
+    expect(shouldRunMaintenance(last, NOW)).toBe(true);
+  });
+
+  it('returns true when overdue (48h ago, e.g. Worker was idle)', () => {
+    const last = isoHoursAgo(NOW, 48);
+    expect(shouldRunMaintenance(last, NOW)).toBe(true);
   });
 });

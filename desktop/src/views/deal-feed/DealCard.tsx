@@ -19,7 +19,7 @@ import { conditionShort } from '../../lib/conditions';
 
 export interface DealCardProps {
   deal: Deal;
-  onSeen: (id: number) => void;
+  onBought: (deal: Deal) => void;
   onDismiss: (id: number) => void;
   onBuy: (deal: Deal) => void;
   onAddToCart?: (deal: Deal) => void;
@@ -39,7 +39,7 @@ function conditionTone(condition: string | null): 'good' | 'default' {
 
 export function DealCard({
   deal,
-  onSeen,
+  onBought,
   onDismiss,
   onBuy,
   onAddToCart,
@@ -47,12 +47,11 @@ export function DealCard({
   cartBusy = false,
 }: DealCardProps) {
   const isHigh = deal.priority === 'high';
-  const isSeen = deal.seen === 1;
+  const isBought = deal.status === 'bought';
   const isRetired = deal.status !== 'open';
 
   const rootClass = [
     'deal',
-    isSeen ? 'deal-seen' : undefined,
     isHigh ? 'deal-high' : undefined,
     isRetired ? 'deal-retired' : undefined,
   ]
@@ -92,10 +91,16 @@ export function DealCard({
               title={
                 deal.status === 'sold'
                   ? 'This listing is no longer on the marketplace (likely bought).'
-                  : 'No longer the cheapest qualifying copy — superseded since it was found.'
+                  : deal.status === 'bought'
+                    ? 'You marked this deal as bought — logged in Purchases.'
+                    : 'No longer the cheapest qualifying copy — superseded since it was found.'
               }
             >
-              {deal.status === 'sold' ? 'SOLD' : 'EXPIRED'}
+              {deal.status === 'sold'
+                ? 'SOLD'
+                : deal.status === 'bought'
+                  ? 'BOUGHT'
+                  : 'EXPIRED'}
             </span>
           </div>
         ) : (
@@ -186,13 +191,13 @@ export function DealCard({
           )}
           <Btn
             variant="ghost"
-            onClick={() => onSeen(deal.id)}
-            disabled={isSeen || busy}
-            title="Mark as seen"
-            aria-label="Mark seen"
+            onClick={() => onBought(deal)}
+            disabled={isBought || busy}
+            title="I bought this — log it and retire the deal"
+            aria-label={`Mark ${deal.card_name} as bought`}
           >
-            <Icon name="eye" size={14} />
-            Seen
+            <Icon name="check" size={14} />
+            {isBought ? 'Bought' : 'Bought?'}
           </Btn>
           <Btn
             variant="ghost"

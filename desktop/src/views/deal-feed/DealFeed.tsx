@@ -11,10 +11,12 @@ import { useState } from 'react';
 
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
+import { Modal } from '../../components/Modal';
 import type { DealFilters } from '../../api/hooks';
-import { useCartAdd, useDeals, useDealMutation } from '../../api/hooks';
+import { useCartAdd, useDeals, useDealMutation, useDeleteWatchItem } from '../../api/hooks';
 import type { Deal } from '../../api/types';
 import { ApiError } from '../../api/client';
+import { savings, usd } from '../../lib/format';
 import { DealCard, openBuyUrl } from './DealCard';
 
 // Preset min-discount filter values offered in the command bar.
@@ -35,6 +37,10 @@ export function DealFeed() {
   const [minDiscount, setMinDiscount] = useState<DiscountPreset>(undefined);
   const [priority, setPriority] = useState<'high' | 'normal' | undefined>(undefined);
 
+  // After a deal is marked bought, hold it here to drive the "remove from
+  // watchlist?" confirmation modal (null = closed).
+  const [confirmRemove, setConfirmRemove] = useState<Deal | null>(null);
+
   // Build the filter object that is passed into useDeals.
   // min_discount is omitted when undefined (no threshold filter).
   const filters: DealFilters = {
@@ -49,12 +55,25 @@ export function DealFeed() {
   const { data: deals, isLoading, isError, error, refetch } = useDeals(filters);
   const mutation    = useDealMutation();
   const cartAdd     = useCartAdd();
+  const deleteWatch = useDeleteWatchItem();
 
   // ---------------------------------------------------------------------------
   // Action handlers — delegate to the mutation; cache invalidates on success.
   // ---------------------------------------------------------------------------
-  function handleSeen(id: number) {
-    mutation.mutate({ id, patch: { seen: true } });
+  function handleBought(deal: Deal) {
+    // Records a purchase-ledger entry and retires the deal (server-side), then
+    // prompts whether to stop watching the card now that it's bought.
+    mutation.mutate(
+      { id: deal.id, patch: { bought: true } },
+      { onSuccess: () => setConfirmRemove(deal) },
+    );
+  }
+
+  function handleConfirmRemove() {
+    if (confirmRemove === null) return;
+    deleteWatch.mutate(confirmRemove.watchlist_id, {
+      onSettled: () => setConfirmRemove(null),
+    });
   }
 
   function handleDismiss(id: number) {
@@ -222,7 +241,7 @@ export function DealFeed() {
             <DealCard
               key={deal.id}
               deal={deal}
-              onSeen={handleSeen}
+              onBought={handleBought}
               onDismiss={handleDismiss}
               onBuy={handleBuy}
               onAddToCart={handleAddToCart}
@@ -232,6 +251,55 @@ export function DealFeed() {
           ))}
         </div>
       )}
+
+      {/* ---- Bought → "remove from watchlist?" confirmation ---- */}
+      <Modal
+        open={confirmRemove !== null}
+        onClose={() => setConfirmRemove(null)}
+        labelledBy="bought-confirm-title"
+        className="confirm-modal"
+      >
+        {confirmRemove !== null && (
+          <>
+            <div className="confirm-modal-head">
+              <Icon name="check" size={16} className="cb-text-good" />
+              <span id="bought-confirm-title" className="cb-eyebrow">
+                Bought · saved{' '}
+                {usd(
+                  savings(
+                    confirmRemove.second_cheapest_cents ?? confirmRemove.baseline_cents,
+                    confirmRemove.price_cents,
+                  ),
+                  confirmRemove.currency,
+                )}
+              </span>
+            </div>
+            <p className="confirm-modal-body">
+              <b>{confirmRemove.card_name}</b> is logged in Purchases. Stop watching
+              this card and remove it from your watchlist?
+            </p>
+            <p className="confirm-modal-note cb-text-faint">
+              Removing also clears its other open deals. Your purchase record is kept.
+            </p>
+            <div className="confirm-modal-foot">
+              <Btn
+                variant="ghost"
+                onClick={() => setConfirmRemove(null)}
+                disabled={deleteWatch.isPending}
+              >
+                Keep watching
+              </Btn>
+              <Btn
+                variant="danger"
+                onClick={handleConfirmRemove}
+                disabled={deleteWatch.isPending}
+              >
+                {deleteWatch.isPending ? 'Removing…' : 'Remove from watchlist'}
+              </Btn>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }

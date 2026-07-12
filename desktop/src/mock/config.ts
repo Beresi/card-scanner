@@ -53,6 +53,8 @@ export const MOCK_CONFIG: Config = {
 
   // Maintenance
   deal_retention_days: 30,
+  deal_staleness_hours: 24,
+  last_maintenance_at: null,
   timezone: 'Asia/Jerusalem',
 
   updated_at: minutesAgo(5),

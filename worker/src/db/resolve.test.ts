@@ -52,6 +52,8 @@ const BASE_CONFIG: ConfigRow = {
   theme_palette: 'cyan',
   font: 'chakra',
   deal_retention_days: 30,
+  deal_staleness_hours: 24,
+  last_maintenance_at: null,
   timezone: 'Asia/Jerusalem',
   scan_mode: 'chunked',
   scan_batch_size: 40,

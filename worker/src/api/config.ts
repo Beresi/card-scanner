@@ -45,6 +45,7 @@ const CONFIG_PATCH_FIELDS = [
   'theme_palette',
   'font',
   'deal_retention_days',
+  'deal_staleness_hours', // migration 0013 — auto-expire window for stale open deals
   'timezone',
   // Detection-mode defaults + catalog controls (migration 0005)
   'default_detection_mode',
@@ -150,6 +151,25 @@ configRouter.patch('/', async (c) => {
         return c.json({ error: 'invalid_request' }, 400);
       }
       if (cme > MAX_CATALOG_EXPORTS_PER_RUN) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // deal_staleness_hours: integer 0–8760 (0 = disabled, up to 1 year).
+    // Open deals not re-confirmed within this window are auto-expired by the
+    // daily maintenance job.
+    if (body['deal_staleness_hours'] !== undefined) {
+      const dsh = body['deal_staleness_hours'];
+      if (!Number.isInteger(dsh) || typeof dsh !== 'number' || dsh < 0 || dsh > 8760) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+    }
+
+    // deal_retention_days: integer 0–3650 (0 = keep forever). Consumed by the
+    // daily archived-deal prune.
+    if (body['deal_retention_days'] !== undefined) {
+      const drd = body['deal_retention_days'];
+      if (!Number.isInteger(drd) || typeof drd !== 'number' || drd < 0 || drd > 3650) {
         return c.json({ error: 'invalid_request' }, 400);
       }
     }

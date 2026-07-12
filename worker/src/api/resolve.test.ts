@@ -1,5 +1,6 @@
 /**
  * Fetch+cache behaviour for GET /api/resolve/expansions and /blueprints.
+ * Cache-only behaviour for GET /api/resolve/card-printings.
  *
  * Strategy: inject a mock CardTrader client via createResolveRouter(deps).
  * No real HTTP is ever made.  The in-memory D1 adapter (makeD1) runs the real
@@ -22,6 +23,12 @@
  *    - fetch error + empty cache → 502
  *    - fetch error + warm cache → fallback to cache
  *    - large set chunking: >200 blueprints sync without error
+ *  card-printings
+ *    - name < 2 trimmed chars → 200 []
+ *    - absent name param → 200 []
+ *    - empty cache → 200 []  (never 502)
+ *    - returns grouped sets with correct printings count, ordered by name
+ *    - unrelated cards are excluded
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -550,5 +557,141 @@ describe('GET /api/resolve/blueprints', () => {
     const body = await res.json<{ id: number; name: string; image_url: string | null }[]>();
     expect(body).toHaveLength(1);
     expect(body[0]!.image_url).toBe('https://example.com/lotus.jpg');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/resolve/card-printings
+// ---------------------------------------------------------------------------
+
+describe('GET /api/resolve/card-printings', () => {
+  /**
+   * Seed the expansion + blueprint rows needed for the card-printings tests.
+   *
+   * Expansions:
+   *   id=10, code='DOM', name='Dominaria'
+   *   id=20, code='M10', name='Magic 2010'
+   *
+   * Blueprints:
+   *   2 × 'Lightning Bolt' in DOM (name_norm='lightning bolt')
+   *   1 × 'Lightning Bolt' in M10
+   *   1 × 'Counterspell' in DOM  (unrelated card)
+   */
+  function seedPrintingsFixture(raw: ReturnType<typeof makeD1>['raw']) {
+    // Expansions
+    raw.prepare(
+      `INSERT INTO expansions (id, game_id, code, name) VALUES (?, 1, ?, ?)`,
+    ).run(10, 'DOM', 'Dominaria');
+    raw.prepare(
+      `INSERT INTO expansions (id, game_id, code, name) VALUES (?, 1, ?, ?)`,
+    ).run(20, 'M10', 'Magic 2010');
+
+    // Lightning Bolt × 2 in Dominaria
+    raw.prepare(
+      `INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (?, ?, ?, ?)`,
+    ).run(1001, 10, 'Lightning Bolt', 'lightning bolt');
+    raw.prepare(
+      `INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (?, ?, ?, ?)`,
+    ).run(1002, 10, 'Lightning Bolt', 'lightning bolt'); // second printing (e.g. foil)
+
+    // Lightning Bolt × 1 in Magic 2010
+    raw.prepare(
+      `INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (?, ?, ?, ?)`,
+    ).run(1003, 20, 'Lightning Bolt', 'lightning bolt');
+
+    // Unrelated card — must not appear in results
+    raw.prepare(
+      `INSERT INTO blueprints (id, expansion_id, name, name_norm) VALUES (?, ?, ?, ?)`,
+    ).run(2001, 10, 'Counterspell', 'counterspell');
+  }
+
+  it('returns grouped sets with correct printings counts, ordered by name', async () => {
+    const { db, raw } = makeD1();
+    seedPrintingsFixture(raw);
+    const env = makeEnv(db);
+    const app = makeApp({ createClient: () => mockClient() });
+
+    const res = await GET(app, env, '/api/resolve/card-printings?name=Lightning Bolt');
+    expect(res.status).toBe(200);
+
+    const body = await res.json<{ id: number; code: string; name: string; printings: number }[]>();
+
+    // Two sets should be returned
+    expect(body).toHaveLength(2);
+
+    // Results are ordered by set name ASC: 'Dominaria' < 'Magic 2010'
+    expect(body[0]!.name).toBe('Dominaria');
+    expect(body[0]!.code).toBe('DOM');
+    expect(body[0]!.id).toBe(10);
+    expect(body[0]!.printings).toBe(2); // two blueprint rows for DOM
+
+    expect(body[1]!.name).toBe('Magic 2010');
+    expect(body[1]!.code).toBe('M10');
+    expect(body[1]!.id).toBe(20);
+    expect(body[1]!.printings).toBe(1); // one blueprint row for M10
+  });
+
+  it('excludes unrelated cards', async () => {
+    const { db, raw } = makeD1();
+    seedPrintingsFixture(raw);
+    const env = makeEnv(db);
+    const app = makeApp({ createClient: () => mockClient() });
+
+    const res = await GET(app, env, '/api/resolve/card-printings?name=Lightning Bolt');
+    expect(res.status).toBe(200);
+    const body = await res.json<{ name: string }[]>();
+
+    // No result should have the name of the unrelated card's set (Counterspell is in DOM,
+    // but its norm is 'counterspell' — not 'lightning bolt' — so it must not inflate the count)
+    // Verify DOM's count is exactly 2, not 3
+    const dom = body.find((r) => r.name === 'Dominaria');
+    expect(dom).toBeDefined();
+    expect((dom as unknown as { printings: number }).printings).toBe(2);
+  });
+
+  it('name shorter than 2 trimmed chars → 200 []', async () => {
+    const { db, raw } = makeD1();
+    seedPrintingsFixture(raw);
+    const env = makeEnv(db);
+    const app = makeApp({ createClient: () => mockClient() });
+
+    const resOneChar = await GET(app, env, '/api/resolve/card-printings?name=L');
+    expect(resOneChar.status).toBe(200);
+    expect(await resOneChar.json()).toEqual([]);
+
+    const resEmpty = await GET(app, env, '/api/resolve/card-printings?name=');
+    expect(resEmpty.status).toBe(200);
+    expect(await resEmpty.json()).toEqual([]);
+  });
+
+  it('absent name param → 200 []', async () => {
+    const { db, raw } = makeD1();
+    seedPrintingsFixture(raw);
+    const env = makeEnv(db);
+    const app = makeApp({ createClient: () => mockClient() });
+
+    const res = await GET(app, env, '/api/resolve/card-printings');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('empty cache (no blueprints) → 200 []  (never 502)', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const app = makeApp({ createClient: () => mockClient() });
+
+    const res = await GET(app, env, '/api/resolve/card-printings?name=Lightning Bolt');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('whitespace-only name (trimmed < 2) → 200 []', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const app = makeApp({ createClient: () => mockClient() });
+
+    const res = await GET(app, env, '/api/resolve/card-printings?name=%20%20');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 });

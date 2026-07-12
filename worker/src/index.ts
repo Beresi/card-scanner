@@ -1,12 +1,13 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { runScan } from './scan/scanner';
-import { shouldRunCron } from './scan/cronGate';
+import { shouldRunCron, shouldRunMaintenance } from './scan/cronGate';
 import { scanRouter } from './api/scan';
 import { telegramRouter } from './api/telegram';
 import { configRouter } from './api/config';
 import { watchlistRouter } from './api/watchlist';
 import { dealsRouter } from './api/deals';
+import { purchasesRouter } from './api/purchases';
 import { resolveRouter } from './api/resolve';
 import { cartRouter } from './api/cart';
 import { catalogRouter } from './api/catalog';
@@ -14,6 +15,9 @@ import {
   getLatestScanRun,
   getConfig,
   reapStaleScanRuns,
+  expireStaleOpenDeals,
+  pruneArchivedDeals,
+  setLastMaintenanceAt,
   listActiveWatchlist,
   countActiveExpansionBlueprints,
   countActiveCardBlueprints,
@@ -181,6 +185,8 @@ app.route('/api/config', configRouter);
 app.route('/api/watchlist', watchlistRouter);
 // GET ?status&min_discount&watchlist_id&priority / PATCH :id / DELETE ?older_than_days
 app.route('/api/deals', dealsRouter);
+// GET /api/purchases — cumulative purchase ledger (total saved over time)
+app.route('/api/purchases', purchasesRouter);
 // GET /expansions?q= / GET /blueprints?expansion_id=&q=
 app.route('/api/resolve', resolveRouter);
 // GET /api/cart / POST /api/cart/add / POST /api/cart/remove
@@ -223,6 +229,23 @@ export default {
         }
 
         const config = await getConfig(env.DB);
+
+        // Daily maintenance (migration 0013): auto-expire stale open deals (false
+        // positives whose blueprint hasn't re-scanned) and prune archived clutter
+        // older than deal_retention_days. Gated to once per ~24h via
+        // last_maintenance_at. Own try/catch — a maintenance failure must never
+        // block the scan gate below. Runs independently of the scan cadence.
+        try {
+          if (shouldRunMaintenance(config.last_maintenance_at, Date.now())) {
+            const expired = await expireStaleOpenDeals(env.DB, config.deal_staleness_hours);
+            const pruned = await pruneArchivedDeals(env.DB, config.deal_retention_days);
+            await setLastMaintenanceAt(env.DB);
+            console.log(`[scheduled] maintenance: expired ${expired} stale, pruned ${pruned} archived`);
+          }
+        } catch (me) {
+          console.error('[scheduled] maintenance failed', me instanceof Error ? me.message : String(me));
+        }
+
         const latest = await getLatestScanRun(env.DB); // newest run (any status)
         if (!shouldRunCron(latest?.started_at ?? null, config.scan_interval_minutes, Date.now())) {
           return; // too soon — skip silently, no scan_runs row opened

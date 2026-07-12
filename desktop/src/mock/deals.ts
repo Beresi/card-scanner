@@ -11,7 +11,7 @@ import { minutesAgo, hoursAgo } from './utils';
 // Literals carry the load-bearing Deal fields; the gap-gate + lifecycle columns
 // (migration 0009) are filled with defaults by the .map() below so the ~24
 // fixtures don't each have to repeat them.
-const _RAW_DEALS: Array<Omit<Deal, 'second_cheapest_cents' | 'gap_pct' | 'avg4_cents' | 'status' | 'retired_at'>> = [
+const _RAW_DEALS: Array<Omit<Deal, 'second_cheapest_cents' | 'gap_pct' | 'avg4_cents' | 'status' | 'retired_at' | 'revalidated_at'>> = [
   // ── High-priority, very recent (within last 10 min) ─────────────────────
   {
     id: 1000,
@@ -671,5 +671,6 @@ export const MOCK_DEALS: Deal[] = _RAW_DEALS.map((d): Deal => {
     avg4_cents: avg4,
     status: 'open',
     retired_at: null,
+    revalidated_at: d.found_at,
   };
 });

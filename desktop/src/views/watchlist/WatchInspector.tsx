@@ -38,7 +38,8 @@
 import { useState } from 'react';
 
 import type { Config, DetectionMode, WatchItem, WatchItemPatch } from '../../api/types';
-import { useConfig, usePatchWatchItem, useDeleteWatchItem, useWatchlist, useResolveExpansions } from '../../api/hooks';
+import { useConfig, usePatchWatchItem, useDeleteWatchItem, useWatchlist } from '../../api/hooks';
+import { PrintingPicker } from './PrintingPicker';
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
 import { InheritField } from '../../components/InheritField';
@@ -72,152 +73,6 @@ const DETECTION_MODE_OPTIONS = [
   { value: 'discount', label: 'Discount %' },
   { value: 'price',    label: 'Price ≤' },
 ];
-
-// ---------------------------------------------------------------------------
-// SetFilterChips — editable chip list of expansion_ids for card-type items
-// ---------------------------------------------------------------------------
-
-interface SetFilterChipsProps {
-  /** Decoded expansion_ids currently in the filter (empty = all sets). */
-  ids: number[];
-  /** Called when the user removes a chip. */
-  onRemove: (id: number) => void;
-  /** Called when a new expansion is added from the search below. */
-  onAdd: (id: number, name: string) => void;
-  /** Expansion names cache: id → name, built from previously picked sets. */
-  names: Record<number, string>;
-}
-
-function SetFilterChips({ ids, onRemove, onAdd, names }: SetFilterChipsProps) {
-  const [q, setQ] = useState('');
-
-  // Debounce the expansion search to avoid per-keystroke queries.
-  const [debouncedQ, setDebouncedQ] = useState('');
-  const [debTimer, setDebTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
-
-  function handleQChange(v: string) {
-    setQ(v);
-    if (debTimer) clearTimeout(debTimer);
-    const t = setTimeout(() => setDebouncedQ(v), 300);
-    setDebTimer(t);
-  }
-
-  const expansionQuery = useResolveExpansions(debouncedQ);
-  const enabled = debouncedQ.trim().length >= 2;
-
-  return (
-    <div className="set-filter-chips" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {/* Chip list — current selected sets */}
-      {ids.length > 0 ? (
-        <div
-          style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-          aria-label="Selected set restrictions"
-        >
-          {ids.map((id) => (
-            <span
-              key={id}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                padding: '2px 6px',
-                background: 'var(--accent-soft)',
-                border: '1px solid color-mix(in oklab, var(--accent) 30%, transparent)',
-                borderRadius: 'var(--radius)',
-                fontSize: 11,
-                fontFamily: 'var(--f-mono)',
-                color: 'var(--text)',
-              }}
-            >
-              {names[id] ?? `#${id}`}
-              <button
-                type="button"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: 0,
-                  color: 'var(--text-dim)',
-                  lineHeight: 1,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                }}
-                aria-label={`Remove set ${names[id] ?? id}`}
-                onClick={() => onRemove(id)}
-              >
-                <Icon name="x" size={10} />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : (
-        <span
-          className="cb-mono"
-          style={{ fontSize: 11, color: 'var(--text-faint)' }}
-        >
-          All sets (no restriction)
-        </span>
-      )}
-
-      {/* Search to add a set restriction */}
-      <div className="addflow-search">
-        <Icon name="search" size={12} svgProps={{ style: { color: 'var(--text-dim)', flexShrink: 0 } }} />
-        <input
-          type="text"
-          className="cb-input"
-          value={q}
-          placeholder="Restrict to a set…"
-          autoComplete="off"
-          spellCheck={false}
-          aria-label="Search for a set to add as a filter restriction"
-          onChange={(e) => handleQChange(e.target.value)}
-        />
-      </div>
-
-      {/* Search results */}
-      {enabled && (
-        <div style={{ maxHeight: 120, overflowY: 'auto' }}>
-          {expansionQuery.isPending && expansionQuery.fetchStatus !== 'idle' ? (
-            <p className="addflow-none cb-mono" style={{ margin: 0 }}>Searching…</p>
-          ) : expansionQuery.isError ? (
-            <p className="addflow-none cb-mono" style={{ margin: 0, color: 'var(--bad)' }}>
-              {expansionQuery.error?.message ?? 'Search failed'}
-            </p>
-          ) : expansionQuery.data && expansionQuery.data.length > 0 ? (
-            <div className="addflow-results" role="listbox" aria-label="Set search results">
-              {expansionQuery.data
-                .filter((exp) => !ids.includes(exp.id))
-                .map((exp) => (
-                  <button
-                    key={exp.id}
-                    type="button"
-                    className="addflow-opt"
-                    role="option"
-                    aria-selected={false}
-                    onClick={() => {
-                      onAdd(exp.id, exp.name);
-                      setQ('');
-                      setDebouncedQ('');
-                    }}
-                  >
-                    <span className="addflow-opt-name" style={{ fontSize: 12 }}>{exp.name}</span>
-                    <span className="cb-mono" style={{ fontSize: 10, color: 'var(--text-dim)' }}>
-                      {exp.code}
-                    </span>
-                    <span className="cb-mono" style={{ fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
-                      + add
-                    </span>
-                  </button>
-                ))}
-            </div>
-          ) : enabled && !expansionQuery.isPending ? (
-            <p className="addflow-none cb-mono" style={{ margin: 0 }}>No matches</p>
-          ) : null}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Internal: the editor body (selected item guaranteed non-null here)
@@ -324,12 +179,6 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
     return [];
   })();
 
-  // Local cache of expansion names for chip display (id → name).
-  // Pre-populated from any chips already stored; additions fill it in.
-  const [expansionNames, setExpansionNames] = useState<Record<number, string>>(() =>
-    Object.fromEntries(parsedExpansionFilter.map((id) => [id, `#${id}`])),
-  );
-
   // Helper: build a WatchItemPatch and fire the mutation
   function patch(p: WatchItemPatch) {
     patchItem.mutate({ id: item.id, patch: p });
@@ -339,18 +188,6 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
   function resetField(col: 'min_discount_pct' | 'min_gap_pct' | 'min_condition' | 'foil_pref' | 'importance' |
     'telegram_enabled' | 'telegram_min_discount_pct' | 'detection_mode' | 'max_price_cents') {
     patchItem.mutate({ id: item.id, patch: { [col]: null } as WatchItemPatch });
-  }
-
-  // Set-filter chip handlers
-  function handleAddSet(id: number, name: string) {
-    setExpansionNames((prev) => ({ ...prev, [id]: name }));
-    const newIds = [...parsedExpansionFilter.filter((x) => x !== id), id];
-    patch({ expansion_filter: newIds });
-  }
-
-  function handleRemoveSet(id: number) {
-    const newIds = parsedExpansionFilter.filter((x) => x !== id);
-    patch({ expansion_filter: newIds.length > 0 ? newIds : null });
   }
 
   // Derived note for the telegram gate explanation
@@ -418,11 +255,10 @@ function InspectorBody({ item, config }: InspectorBodyProps) {
             <span className="cb-eyebrow" style={{ display: 'block', marginBottom: 6 }}>
               Set restriction
             </span>
-            <SetFilterChips
-              ids={parsedExpansionFilter}
-              names={expansionNames}
-              onAdd={handleAddSet}
-              onRemove={handleRemoveSet}
+            <PrintingPicker
+              cardName={item.label}
+              value={parsedExpansionFilter.length ? parsedExpansionFilter : null}
+              onChange={(next) => patch({ expansion_filter: next })}
             />
           </div>
         )}

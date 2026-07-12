@@ -70,6 +70,8 @@ const CONFIG_FALLBACK: Config = {
   catalog_sync_enabled: 0,
   catalog_max_exports_per_run: 1,
   deal_retention_days: 30,
+  deal_staleness_hours: 24,
+  last_maintenance_at: null,
   timezone: null,
   updated_at: null,
 };

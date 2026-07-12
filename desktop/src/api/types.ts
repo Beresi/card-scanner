@@ -64,12 +64,44 @@ export interface Deal {
 
   seen: DbBool;
   dismissed: DbBool;
-  // Lifecycle (migration 0009): 'open' = active; 'sold' = listing gone;
-  // 'expired' = still listed but no longer the qualifying candidate.
-  status: 'open' | 'sold' | 'expired';
+  // Lifecycle: 'open' = active; 'sold' = listing gone; 'expired' = still listed
+  // but no longer the qualifying candidate (migration 0009); 'bought' = the owner
+  // confirmed a purchase (migration 0012; always dismissed, drops out of the feed).
+  status: 'open' | 'sold' | 'expired' | 'bought';
   retired_at: string | null;
+  // Re-priced timestamp (migration 0013): set on insert and every re-scan
+  // refresh of a still-open deal. NULL only on pre-0013 rows never re-scanned.
+  revalidated_at: string | null;
   telegram_sent: DbBool;
   telegram_sent_at: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Purchase ledger (migration 0012) — what the owner actually bought
+// ---------------------------------------------------------------------------
+
+/** One confirmed purchase. All money is integer cents. */
+export interface Purchase {
+  id: number;
+  product_id: number;
+  card_name: string;
+  expansion_name: string | null;
+  condition: string | null;
+  foil: Foil;
+  language: string | null;
+  paid_cents: number;
+  saved_cents: number;
+  currency: string;
+  bought_at: string; // SQLite UTC datetime
+}
+
+/** GET /api/purchases response — cumulative savings + the ledger. */
+export interface PurchaseSummary {
+  total_saved_cents: number;
+  total_paid_cents: number;
+  count: number;
+  currency: string;
+  items: Purchase[];
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +155,10 @@ export interface Config {
 
   // Maintenance
   deal_retention_days: number;
+  // Auto-expire window for stale open deals (migration 0013); 0 = disabled.
+  deal_staleness_hours: number;
+  // Last time the daily maintenance job ran (UTC); NULL = never. Read-only from UI.
+  last_maintenance_at: string | null;
   timezone: string | null;
 
   updated_at: string | null;
@@ -318,6 +354,21 @@ export interface ResolveCard {
   printings: number;
   /** Number of distinct sets containing this card */
   sets: number;
+}
+
+/**
+ * One set a card is printed in, from GET /api/resolve/card-printings?name=
+ * Drives the print-restriction droplist (every set the card appears in).
+ */
+export interface ResolveCardPrinting {
+  /** expansion_id */
+  id: number;
+  /** set code, e.g. 'DOM' */
+  code: string;
+  /** set name, e.g. 'Dominaria' */
+  name: string;
+  /** number of blueprint printings of this card in this set */
+  printings: number;
 }
 
 /**

@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '../index';
-import { listDeals, patchDeal, pruneDeals } from '../db/repo';
+import { listDeals, markDealBought, patchDeal, pruneDeals, deleteArchivedDeals, deleteAllDeals } from '../db/repo';
 import { parseIntParam, parseBoolBody } from './validate';
 
 export const dealsRouter = new Hono<{ Bindings: Env }>();
@@ -94,6 +94,18 @@ dealsRouter.patch('/:id', async (c) => {
     // parseBoolBody throws Error('invalid_request') on wrong type.
     const seen      = parseBoolBody(body['seen']);
     const dismissed = parseBoolBody(body['dismissed']);
+    const bought    = parseBoolBody(body['bought']);
+
+    // bought:true is a dedicated transition — record the purchase ledger entry
+    // AND retire the deal atomically (markDealBought). It is not a generic flag,
+    // so it takes its own path rather than the seen/dismissed UPDATE.
+    if (bought === true) {
+      const boughtRow = await markDealBought(c.env.DB, id);
+      if (boughtRow === null) {
+        return c.json({ error: 'not_found' }, 404);
+      }
+      return c.json(boughtRow);
+    }
 
     const updated = await patchDeal(c.env.DB, id, { seen, dismissed });
     if (updated === null) {
@@ -106,13 +118,35 @@ dealsRouter.patch('/:id', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE / — prune deals older than N days
+// DELETE / — clear deals. Two mutually-exclusive modes:
+//   ?scope=archived  → delete only retired/dismissed clutter (keep open deals).
+//   ?scope=all       → delete every deal row (live deals return next scan).
+//   ?older_than_days=N → legacy/automated: prune anything older than N days.
+// Exactly one selector is required.
 // ---------------------------------------------------------------------------
+
+const VALID_SCOPES = ['archived', 'all'] as const;
+type ClearScope = (typeof VALID_SCOPES)[number];
 
 dealsRouter.delete('/', async (c) => {
   try {
-    // older_than_days is REQUIRED.
+    const rawScope = c.req.query('scope');
     const rawDays = c.req.query('older_than_days');
+
+    // scope takes precedence when present (the desktop "Clear archive"/"Clear all").
+    if (rawScope !== undefined && rawScope !== '') {
+      if (!(VALID_SCOPES as readonly string[]).includes(rawScope)) {
+        return c.json({ error: 'invalid_request' }, 400);
+      }
+      const scope = rawScope as ClearScope;
+      const deleted =
+        scope === 'archived'
+          ? await deleteArchivedDeals(c.env.DB) // all retired/dismissed, keep open
+          : await deleteAllDeals(c.env.DB); // unconditional wipe
+      return c.json({ deleted });
+    }
+
+    // Legacy path: older_than_days is REQUIRED when no scope is given.
     if (rawDays === undefined || rawDays === '') {
       return c.json({ error: 'invalid_request' }, 400);
     }

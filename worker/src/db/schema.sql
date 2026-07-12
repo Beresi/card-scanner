@@ -98,6 +98,10 @@ CREATE TABLE IF NOT EXISTS deals (
   -- 'expired' = still listed but no longer the qualifying candidate.
   status            TEXT    NOT NULL DEFAULT 'open',
   retired_at        TEXT,                              -- UTC TEXT; set when status leaves 'open'
+  -- Re-priced timestamp (migration 0013): stamped on insert and every time a
+  -- still-open deal's economics are refreshed on a re-scan. Drives auto-expiry of
+  -- deals we haven't re-confirmed within config.deal_staleness_hours.
+  revalidated_at    TEXT,
   telegram_sent     INTEGER NOT NULL DEFAULT 0,        -- boolean: 0/1
   telegram_sent_at  TEXT
 );
@@ -106,6 +110,25 @@ CREATE INDEX IF NOT EXISTS idx_deals_found_at ON deals(found_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deals_open     ON deals(dismissed, found_at DESC);
 -- Open-feed index keyed on status (listDeals 'open' = status='open' AND dismissed=0).
 CREATE INDEX IF NOT EXISTS idx_deals_status_open ON deals(status, dismissed, found_at DESC);
+
+-- Permanent purchase ledger (migration 0012) — what the owner actually BOUGHT.
+-- STANDALONE: no FK to deals/watchlist, snapshot columns only, so it survives the
+-- deal prune job AND the watchlist cascade-delete. Drives the Purchases view's
+-- cumulative "total saved over time". Money is integer cents; bought_at is UTC.
+CREATE TABLE IF NOT EXISTS purchases (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id      INTEGER NOT NULL,            -- snapshot of the bought listing (no UNIQUE/FK)
+  card_name       TEXT    NOT NULL,
+  expansion_name  TEXT,
+  condition       TEXT,
+  foil            INTEGER,                      -- 0/1
+  language        TEXT,
+  paid_cents      INTEGER NOT NULL,             -- = deal.price_cents
+  saved_cents     INTEGER NOT NULL,             -- (second_cheapest_cents ?? baseline_cents) - price_cents
+  currency        TEXT    NOT NULL,
+  bought_at       TEXT    NOT NULL DEFAULT (datetime('now'))  -- UTC
+);
+CREATE INDEX IF NOT EXISTS idx_purchases_bought_at ON purchases(bought_at DESC);
 
 -- Global config — EXACTLY ONE ROW, id = 1 (enforced by CHECK + the seed below).
 -- Holds: (a) deal-logic defaults inherited by NULL-override tickets (§9a),
@@ -163,6 +186,13 @@ CREATE TABLE IF NOT EXISTS config (
 
   -- Maintenance / data
   deal_retention_days           INTEGER NOT NULL DEFAULT 30,   -- 0 = keep forever
+  -- Open deals whose revalidated_at is older than this are auto-expired by the daily
+  -- maintenance job (removes stale false positives whose blueprint hasn't re-scanned).
+  -- 0 = disabled (migration 0013).
+  deal_staleness_hours          INTEGER NOT NULL DEFAULT 24,
+  -- Last time the daily maintenance job (expire-stale + prune-archived) ran. NULL =
+  -- never. Gates maintenance to once per ~24h across the 1-minute heartbeat cron.
+  last_maintenance_at           TEXT,
   timezone                      TEXT             DEFAULT 'Asia/Jerusalem',
 
   -- Chunked scan cycle tracking (migration 0004)

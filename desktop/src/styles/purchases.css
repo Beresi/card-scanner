@@ -1,0 +1,115 @@
+/* ============================================================
+   PURCHASES VIEW — savings ledger
+   .purchases-view / .purchases-hero / .purchase-row
+   ============================================================ */
+
+.purchases-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad);
+}
+
+/* ---- Hero: cumulative total saved ---- */
+.purchases-hero-in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.purchases-hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.purchases-hero-saved {
+  font-family: var(--f-mono);
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.purchases-hero-stats {
+  display: flex;
+  gap: 28px;
+}
+
+.purchases-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: right;
+}
+
+.purchases-stat-v {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ---- Ledger rows ---- */
+.purchase-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.purchase-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.purchase-row:last-child {
+  border-bottom: 0;
+}
+
+.purchase-row-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.purchase-row-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.purchase-row-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.purchase-row-money {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.purchase-row-paid {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.purchase-row-saved {
+  font-size: 11px;
+}
+
+.purchase-row-age {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  min-width: 34px;
+  text-align: right;
+}

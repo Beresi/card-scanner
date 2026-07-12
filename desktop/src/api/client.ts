@@ -1,4 +1,4 @@
-import type { Cart, CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
+import type { Cart, CatalogProgress, Config, Deal, Health, PurchaseSummary, ResolveBlueprint, ResolveCard, ResolveCardPrinting, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate } from './types';
 
 // ---------------------------------------------------------------------------
 // Environment — base URL and dev token come from Vite env vars.
@@ -121,15 +121,30 @@ export function getDeals(filters: GetDealsFilters = {}): Promise<Deal[]> {
   return apiFetch<Deal[]>(`/api/deals${qs ? `?${qs}` : ''}`);
 }
 
-/** PATCH /api/deals/:id */
+/** PATCH /api/deals/:id — seen/dismissed flags, or bought:true (records a purchase). */
 export function patchDeal(
   id: number,
-  body: { seen?: boolean; dismissed?: boolean },
+  body: { seen?: boolean; dismissed?: boolean; bought?: boolean },
 ): Promise<Deal> {
   return apiFetch<Deal>(`/api/deals/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * DELETE /api/deals?scope=… — bulk clear.
+ * - 'archived' removes retired/dismissed clutter (expired/sold/bought), keeping live open deals.
+ * - 'all' removes every deal row (live deals return on the next scan if still valid).
+ * Returns the number of rows deleted.
+ */
+export async function clearDeals(scope: 'archived' | 'all'): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>(`/api/deals?scope=${scope}`, { method: 'DELETE' });
+}
+
+/** GET /api/purchases — cumulative purchase ledger (total saved over time). */
+export function getPurchases(): Promise<PurchaseSummary> {
+  return apiFetch<PurchaseSummary>('/api/purchases');
 }
 
 /** GET /api/watchlist */
@@ -240,6 +255,18 @@ export function getResolveBlueprints(expansionId: number, q: string): Promise<Re
 export function getResolveCards(q: string): Promise<ResolveCard[]> {
   const params = new URLSearchParams({ q });
   return apiFetch<ResolveCard[]>(`/api/resolve/cards?${params.toString()}`);
+}
+
+/**
+ * GET /api/resolve/card-printings?name=<str>
+ *
+ * Returns every set the named card is printed in (from the local blueprint
+ * catalog), so the print-restriction droplist can list them. Empty array when
+ * name < 2 chars (server contract). Cache-only — never hits CardTrader; never 502.
+ */
+export function getCardPrintings(name: string): Promise<ResolveCardPrinting[]> {
+  const params = new URLSearchParams({ name });
+  return apiFetch<ResolveCardPrinting[]>(`/api/resolve/card-printings?${params.toString()}`);
 }
 
 /**

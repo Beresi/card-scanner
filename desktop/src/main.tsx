@@ -46,6 +46,7 @@ import "./styles/overlays.css";
 import "./styles/boot.css";
 import "./styles/effects.css";
 import "./styles/cart.css";
+import "./styles/purchases.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

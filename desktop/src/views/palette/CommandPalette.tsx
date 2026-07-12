@@ -138,6 +138,14 @@ export function CommandPalette({
         run: () => onNavigate('settings'),
       },
       {
+        id: 'nav-purchases',
+        group: 'Navigate',
+        label: 'Purchases',
+        hint: 'Bought cards and total saved',
+        icon: 'check',
+        run: () => onNavigate('purchases'),
+      },
+      {
         id: 'nav-health',
         group: 'Navigate',
         label: 'Health',

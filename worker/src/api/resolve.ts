@@ -47,6 +47,7 @@ import {
   syncBlueprints,
   expansionsStale,
   countCatalogProgress,
+  listCardPrintingSets,
 } from '../db/repo';
 import { normalizeCardName } from '../scan/cardName';
 import { parseIntParam } from './validate';
@@ -279,6 +280,37 @@ export function createResolveRouter(deps?: ResolveDeps): Hono<{ Bindings: Env }>
     try {
       const progress = await countCatalogProgress(c.env.DB);
       return c.json(progress);
+    } catch (err) {
+      return handleError(err, c);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /card-printings — list every set a card is printed in (cache-only)
+  //
+  // Backs the desktop "print restriction droplist": given a card name, returns
+  // every expansion that has at least one blueprint for that name, with a count
+  // of how many printings exist per set (normal / foil / borderless / etc.).
+  //
+  // Query param:
+  //   name  — card name (raw, will be normalised); trimmed length < 2 → [].
+  //
+  // Returns an array of { id, code, name, printings } ordered by set name.
+  // Cache-only — never calls CardTrader.  Empty cache → [].  Never 502.
+  // -------------------------------------------------------------------------
+
+  router.get('/card-printings', async (c) => {
+    try {
+      const rawName = c.req.query('name') ?? '';
+      const trimmed = rawName.trim();
+
+      if (trimmed.length < 2) {
+        return c.json([]);
+      }
+
+      const norm = normalizeCardName(trimmed);
+      const rows = await listCardPrintingSets(c.env.DB, norm);
+      return c.json(rows);
     } catch (err) {
       return handleError(err, c);
     }

@@ -65,6 +65,7 @@ import {
   useResolveExpansions,
 } from '../../api/hooks';
 import type { ResolveBlueprint, ResolveCard, ResolveExpansion } from '../../api/types';
+import { PrintingPicker } from './PrintingPicker';
 import { ApiError } from '../../api/client';
 import { Btn } from '../../components/Btn';
 import { Icon } from '../../components/Icon';
@@ -401,62 +402,6 @@ function CardNameResults({
 }
 
 // ---------------------------------------------------------------------------
-// SetChips — small chip list of chosen expansion_id restrictions (any-printing mode)
-// ---------------------------------------------------------------------------
-interface SetChipsProps {
-  ids: number[];
-  names: Record<number, string>;
-  onRemove: (id: number) => void;
-}
-
-function SetChips({ ids, names, onRemove }: SetChipsProps) {
-  if (ids.length === 0) return null;
-  return (
-    <div
-      style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-      aria-label="Selected set restrictions"
-    >
-      {ids.map((id) => (
-        <span
-          key={id}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '2px 8px',
-            background: 'var(--accent-soft)',
-            border: '1px solid color-mix(in oklab, var(--accent) 30%, transparent)',
-            borderRadius: 'var(--radius)',
-            fontSize: 11,
-            fontFamily: 'var(--f-mono)',
-            color: 'var(--text)',
-          }}
-        >
-          {names[id] ?? `#${id}`}
-          <button
-            type="button"
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 0,
-              color: 'var(--text-dim)',
-              lineHeight: 1,
-              display: 'inline-flex',
-              alignItems: 'center',
-            }}
-            aria-label={`Remove set ${names[id] ?? id}`}
-            onClick={() => onRemove(id)}
-          >
-            <Icon name="x" size={10} />
-          </button>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // ManualFallback — collapsible paste-id section (Wave-1 power-user path)
 // ---------------------------------------------------------------------------
 interface ManualFallbackProps {
@@ -605,19 +550,13 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
   // Any-printing mode: chosen card name
   const [chosenCardName, setChosenCardName] = useState<string | null>(null);
 
-  // Any-printing mode: selected set restriction chips
-  const [setFilterIds, setSetFilterIds] = useState<number[]>([]);
-  const [setFilterNames, setSetFilterNames] = useState<Record<number, string>>({});
-
-  // Any-printing mode: set restriction search
-  const [setQ, setSetQ] = useState('');
-  const debouncedSetQ = useDebouncedValue(setQ, DEBOUNCE_MS);
+  // Any-printing mode: print restriction (null = all sets)
+  const [pickerValue, setPickerValue] = useState<number[] | null>(null);
 
   // Queries — hooks always called; enabled gates prevent actual requests
   const expansionQuery    = useResolveExpansions(debouncedExpQ);
   const blueprintQuery    = useResolveBlueprints(chosenExp?.id ?? null, debouncedBpQ);
   const cardNameQuery     = useResolveCards(debouncedCardQ);
-  const setFilterQuery    = useResolveExpansions(debouncedSetQ);
   const catalogProgress   = useCatalogProgress();
 
   // Reset all local state when the modal opens or closes
@@ -629,9 +568,7 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
       setBpQ('');
       setCardQ('');
       setChosenCardName(null);
-      setSetFilterIds([]);
-      setSetFilterNames({});
-      setSetQ('');
+      setPickerValue(null);
       createItem.reset();
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -648,9 +585,7 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
     setBpQ('');
     setCardQ('');
     setChosenCardName(null);
-    setSetFilterIds([]);
-    setSetFilterNames({});
-    setSetQ('');
+    setPickerValue(null);
     createItem.reset();
   }
 
@@ -687,22 +622,23 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
     );
   }
 
-  // Called when user picks a card name in any-printing mode
+  // Called when user picks a card name in any-printing mode.
+  // Single-set shortcut: when the card has exactly 1 set, skip step 2 and create immediately.
   function handlePickCardName(card: ResolveCard) {
+    if (card.sets === 1) {
+      createItem.mutate(
+        { type: 'card', card_name: card.name, game_id: 1 },
+        {
+          onSuccess: (created) => {
+            select(created.id);
+            handleClose();
+          },
+        },
+      );
+      return;
+    }
     setChosenCardName(card.name);
     setCardQ('');
-  }
-
-  // Called when user adds a set restriction chip in any-printing mode
-  function handleAddSetFilter(exp: ResolveExpansion) {
-    setSetFilterIds((prev) => prev.includes(exp.id) ? prev : [...prev, exp.id]);
-    setSetFilterNames((prev) => ({ ...prev, [exp.id]: exp.name }));
-    setSetQ('');
-  }
-
-  // Called when user removes a set restriction chip
-  function handleRemoveSetFilter(id: number) {
-    setSetFilterIds((prev) => prev.filter((x) => x !== id));
   }
 
   // Submit the any-printing card watch
@@ -712,7 +648,7 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
       {
         type: 'card',
         card_name: chosenCardName,
-        ...(setFilterIds.length > 0 ? { expansion_filter: setFilterIds } : {}),
+        ...(pickerValue && pickerValue.length > 0 ? { expansion_filter: pickerValue } : {}),
         game_id: 1,
       },
       {
@@ -966,51 +902,23 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
                 <button
                   type="button"
                   className="addflow-back cb-mono"
-                  onClick={() => { setChosenCardName(null); setSetFilterIds([]); setSetFilterNames({}); }}
+                  onClick={() => { setChosenCardName(null); setPickerValue(null); }}
                   aria-label="Change chosen card"
                 >
                   ← change
                 </button>
               </div>
 
-              {/* Optional set restriction */}
+              {/* Printings to watch */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span className="cb-eyebrow" style={{ color: 'var(--text-dim)' }}>
-                  Set restriction (optional)
+                  Printings to watch
                 </span>
-                <p className="cb-mono" style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>
-                  Leave empty to watch every printing. Add sets to restrict matching.
-                </p>
-
-                {/* Current chips */}
-                <SetChips
-                  ids={setFilterIds}
-                  names={setFilterNames}
-                  onRemove={handleRemoveSetFilter}
+                <PrintingPicker
+                  cardName={chosenCardName}
+                  value={pickerValue}
+                  onChange={setPickerValue}
                 />
-
-                {/* Set search to add chips */}
-                <SearchBox
-                  id="addflow-setfilter-search"
-                  label="Search for a set to restrict"
-                  value={setQ}
-                  placeholder="Add a set restriction…"
-                  onChange={setSetQ}
-                />
-
-                {setQ.trim().length >= 2 && (
-                  <ExpansionResults
-                    q={setQ}
-                    debouncedQ={debouncedSetQ}
-                    isPending={setFilterQuery.isPending && setFilterQuery.fetchStatus !== 'idle'}
-                    isError={setFilterQuery.isError}
-                    error={setFilterQuery.error}
-                    data={setFilterQuery.data}
-                    onPick={handleAddSetFilter}
-                    pickLabel="+ restrict to this set"
-                    excludeIds={setFilterIds}
-                  />
-                )}
               </div>
 
               {/* Submit */}
@@ -1028,8 +936,8 @@ export function AddFlow({ open, onClose }: AddFlowProps) {
               >
                 {createItem.isPending
                   ? 'Adding…'
-                  : setFilterIds.length > 0
-                  ? `Watch "${chosenCardName}" in ${setFilterIds.length} set${setFilterIds.length !== 1 ? 's' : ''}`
+                  : pickerValue && pickerValue.length > 0
+                  ? `Watch "${chosenCardName}" in ${pickerValue.length} set${pickerValue.length !== 1 ? 's' : ''}`
                   : `Watch "${chosenCardName}" — all sets`}
               </Btn>
             </>

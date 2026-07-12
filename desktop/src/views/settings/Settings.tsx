@@ -330,7 +330,8 @@ const TAB_OPTIONS: { value: SettingsTab; label: string }[] = [
 
 export interface SettingsProps {
   onReplayBoot?: () => void;
-  onClearDeals?: () => void;
+  /** scope: 'archived' clears retired/dismissed clutter; 'all' wipes every deal. */
+  onClearDeals?: (scope: 'archived' | 'all') => void;
 }
 
 export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
@@ -349,6 +350,9 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
 
   // Local ephemeral state for "Send test" feedback — not server data.
   const [tested, setTested] = useState(false);
+
+  // Two-step arm for the destructive "Clear all deals" button (no confirm dialog infra).
+  const [clearAllArmed, setClearAllArmed] = useState(false);
 
   // Guard: config not yet loaded — show a minimal loading state.
   if (!config) {
@@ -754,7 +758,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                 <Status tone="good" label="VALID" />
               </Row>
 
-              <Row label="Deal retention" hint="auto-prune older · 0 = keep forever">
+              <Row label="Deal retention" hint="daily auto-prune of archived deals older than · 0 = keep forever">
                 <NumInput
                   value={c.deal_retention_days}
                   min={0}
@@ -762,6 +766,17 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   onChange={(v) => cfg.mutate({ deal_retention_days: v })}
                   suffix="days"
                   aria-label="Deal retention in days"
+                />
+              </Row>
+
+              <Row label="Stale-deal expiry" hint="auto-expire open deals not re-confirmed within · 0 = off">
+                <NumInput
+                  value={c.deal_staleness_hours}
+                  min={0}
+                  max={8760}
+                  onChange={(v) => cfg.mutate({ deal_staleness_hours: v })}
+                  suffix="hours"
+                  aria-label="Stale-deal expiry in hours"
                 />
               </Row>
 
@@ -829,15 +844,33 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                 </Btn>
               </Row>
 
-              <Row label="Clear all deals" hint="irreversible">
+              <Row label="Clear archive" hint="removes expired / sold / bought · keeps live deals">
                 <Btn
-                  variant="danger"
+                  variant="ghost"
                   onClick={() => {
-                    if (onClearDeals) onClearDeals();
+                    if (onClearDeals) onClearDeals('archived');
                   }}
                 >
                   <Icon name="x" size={13} />
-                  Clear feed
+                  Clear archive
+                </Btn>
+              </Row>
+
+              <Row label="Clear all deals" hint="wipes every deal · irreversible · live deals return next scan">
+                <Btn
+                  variant="danger"
+                  onClick={() => {
+                    if (!clearAllArmed) {
+                      setClearAllArmed(true);
+                      return;
+                    }
+                    setClearAllArmed(false);
+                    if (onClearDeals) onClearDeals('all');
+                  }}
+                  onBlur={() => setClearAllArmed(false)}
+                >
+                  <Icon name="x" size={13} />
+                  {clearAllArmed ? 'Click again to confirm' : 'Clear all'}
                 </Btn>
               </Row>
             </Panel>

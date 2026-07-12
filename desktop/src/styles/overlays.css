@@ -58,6 +58,39 @@
     0 0 calc(40px * var(--glow)) color-mix(in oklab, var(--accent) 14%, transparent);
 }
 
+/* Confirmation dialog variant (Bought → remove-from-watchlist prompt).
+   Narrower than the default modal; tight vertical rhythm. */
+.confirm-modal {
+  width: 420px;
+  gap: 12px;
+}
+
+.confirm-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.confirm-modal-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.confirm-modal-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.confirm-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* ============================================================
    B. COMMAND PALETTE (⌘K)
    .cmdk-overlay  /  .cmdk  /  .cmdk-input-wrap  /  .cmdk-input

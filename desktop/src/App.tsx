@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useConfig, useDeals, useHealth, useLocalScanStatus, useRunLocalScan, useScanRuns } from './api/hooks';
+import { useClearDeals, useConfig, useDeals, useHealth, useLocalScanStatus, useRunLocalScan, useScanRuns } from './api/hooks';
 import { BrandGlyph } from './components/BrandGlyph';
 import { Clock } from './components/Clock';
 import { Icon } from './components/Icon';
@@ -34,6 +34,7 @@ import { Cart } from './views/cart/Cart';
 import { DealFeed } from './views/deal-feed/DealFeed';
 import { Health } from './views/health/Health';
 import { CommandPalette } from './views/palette/CommandPalette';
+import { Purchases } from './views/purchases/Purchases';
 import { ScanOverlay } from './views/scan/ScanOverlay';
 import { BootSequence } from './views/boot/BootSequence';
 import { Settings } from './views/settings/Settings';
@@ -58,6 +59,7 @@ const NAV: NavEntry[] = [
   { key: 'cart',      label: 'Cart',       icon: 'cart'  },
   { key: 'feed',      label: 'Deal Feed',  icon: 'feed'  },
   { key: 'watchlist', label: 'Watchlist',  icon: 'watch' },
+  { key: 'purchases', label: 'Purchases',  icon: 'check' },
   { key: 'settings',  label: 'Settings',   icon: 'gear'  },
   { key: 'health',    label: 'Health',     icon: 'pulse' },
 ];
@@ -69,6 +71,7 @@ const TITLES: Record<ViewKey, [string, string]> = {
   settings:  ['Settings', 'one config · the single source of truth'],
   health:    ['Health', 'scanner observability'],
   cart:      ['Cart', 'your CardTrader cart'],
+  purchases: ['Purchases', 'what you bought · what you saved'],
 };
 
 // ---------------------------------------------------------------------------
@@ -94,7 +97,7 @@ function computeNextScanTarget(intervalMinutes = 60): number {
 interface ActiveViewProps {
   view: ViewKey;
   onReplayBoot: () => void;
-  onClearDeals: () => void;
+  onClearDeals: (scope: 'archived' | 'all') => void;
 }
 
 function ActiveView({ view, onReplayBoot, onClearDeals }: ActiveViewProps) {
@@ -109,6 +112,8 @@ function ActiveView({ view, onReplayBoot, onClearDeals }: ActiveViewProps) {
       return <Health />;
     case 'cart':
       return <Cart />;
+    case 'purchases':
+      return <Purchases />;
   }
 }
 
@@ -162,9 +167,9 @@ export function App() {
   // ---- Watchlist selection (ephemeral store — drives the right rail) ----
   const { selectedId } = useWatchSelection();
 
-  // ---- Real deals: open for the nav badge ----
+  // ---- Real deals: open count for the nav badge ----
   const { data: openDeals = [] } = useDeals({ status: 'open' });
-  const unseenCount = openDeals.filter((d) => d.seen === 0).length;
+  const openCount = openDeals.length;
 
   // ---- Local scan status — gates the Scan Now button ----
   const { data: localScanStatus } = useLocalScanStatus();
@@ -172,6 +177,9 @@ export function App() {
 
   // ---- Local scan mutation ----
   const runLocalScan = useRunLocalScan();
+
+  // Bulk deal clear (Settings → Maintenance): 'archived' vs 'all'.
+  const clearDeals = useClearDeals();
 
   // ---- Scan runs — watch for the user-triggered run closing ----
   // Pass activeLocalRunId so the hook polls fast only while our run is open.
@@ -276,10 +284,28 @@ export function App() {
     setBooted(false);
   }, []);
 
-  // ---- Clear deals toast ----
-  const onClearDeals = useCallback(() => {
-    push({ title: 'Feed cleared', sub: 'All deals removed.', tone: 'accent', icon: 'x' });
-  }, [push]);
+  // ---- Clear deals (Settings → Maintenance) ----
+  const onClearDeals = useCallback(
+    (scope: 'archived' | 'all') => {
+      clearDeals.mutate(scope, {
+        onSuccess: ({ deleted }) => {
+          push({
+            title: scope === 'archived' ? 'Archive cleared' : 'Feed cleared',
+            sub:
+              scope === 'archived'
+                ? `${deleted} archived deal${deleted === 1 ? '' : 's'} removed.`
+                : `${deleted} deal${deleted === 1 ? '' : 's'} removed.`,
+            tone: 'accent',
+            icon: 'x',
+          });
+        },
+        onError: (err) => {
+          push({ title: 'Clear failed', sub: err.message, tone: 'hot', icon: 'x' });
+        },
+      });
+    },
+    [clearDeals, push],
+  );
 
   // ---- Toggle effects ----
   const onToggleEffects = useCallback(() => {
@@ -361,8 +387,8 @@ export function App() {
                 >
                   <Icon name={entry.icon} size={18} />
                   <span>{entry.label}</span>
-                  {entry.key === 'feed' && unseenCount > 0 && (
-                    <span className="rail-badge cb-mono">{unseenCount}</span>
+                  {entry.key === 'feed' && openCount > 0 && (
+                    <span className="rail-badge cb-mono">{openCount}</span>
                   )}
                   {isActive && <span className="rail-active-bar" aria-hidden="true" />}
                 </button>

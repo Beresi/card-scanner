@@ -137,6 +137,8 @@ export interface ConfigRow {
 
   // Maintenance / data
   deal_retention_days: number;             // NOT NULL DEFAULT 30
+  deal_staleness_hours: number;            // NOT NULL DEFAULT 24 (migration 0013) — 0 = disabled
+  last_maintenance_at: string | null;      // UTC TEXT; NULL = maintenance never run (migration 0013)
   timezone: string | null;                 // nullable DEFAULT 'Asia/Jerusalem'
 
   // Chunked scan cycle tracking (migration 0004)
@@ -312,11 +314,42 @@ export interface DealRow {
   found_at: string;            // UTC TEXT
   seen: 0 | 1;
   dismissed: 0 | 1;
-  /** Lifecycle (migration 0009): 'open' = active; 'sold' = gone; 'expired' = no longer candidate. */
-  status: 'open' | 'sold' | 'expired';
+  /**
+   * Lifecycle: 'open' = active; 'sold' = gone; 'expired' = no longer candidate
+   * (migration 0009); 'bought' = the owner confirmed a purchase (migration 0012).
+   * 'bought' rows always carry dismissed=1 so they drop out of the open feed.
+   */
+  status: 'open' | 'sold' | 'expired' | 'bought';
   retired_at: string | null;   // UTC TEXT; set when status leaves 'open'
+  // Re-priced timestamp (migration 0013): set on insert and every re-scan refresh
+  // of a still-open deal. NULL only on pre-0013 rows never re-scanned. Drives
+  // auto-expiry of deals not re-confirmed within config.deal_staleness_hours.
+  revalidated_at: string | null;
   telegram_sent: 0 | 1;
   telegram_sent_at: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Purchase row (read shape from the `purchases` ledger — migration 0012)
+// ---------------------------------------------------------------------------
+
+/**
+ * One confirmed purchase. A standalone snapshot (no FK to deals/watchlist) so it
+ * survives the deal prune job and the watchlist cascade-delete. Money is integer
+ * cents; `bought_at` is a UTC TEXT timestamp.
+ */
+export interface PurchaseRow {
+  id: number;
+  product_id: number;
+  card_name: string;
+  expansion_name: string | null;
+  condition: string | null;
+  foil: 0 | 1 | null;
+  language: string | null;
+  paid_cents: number;
+  saved_cents: number;
+  currency: string;
+  bought_at: string; // UTC TEXT
 }
 
 // ---------------------------------------------------------------------------

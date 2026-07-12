@@ -22,6 +22,7 @@ import type {
   ConfigRow,
   DealInsert,
   DealRow,
+  PurchaseRow,
   ScanCounts,
   ScanRunRow,
   ExpansionRow,
@@ -335,13 +336,15 @@ export async function upsertDeal(
          discount_pct,
          priority,
          buy_url,
-         found_at
+         found_at,
+         revalidated_at
        ) VALUES (
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?,
+         datetime('now'),
          datetime('now')
        )
        ON CONFLICT(product_id) DO NOTHING`,
@@ -376,6 +379,63 @@ export async function upsertDeal(
   // meta.changes is 1 when a row was inserted, 0 when the ON CONFLICT path
   // fired (existing product_id).  This is the sole dedupe signal — do NOT
   // re-query and diff, as the skill and PRD §7/§13 both require.
+  return (res.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Refresh the live economics of an ALREADY-EXISTING open deal on a re-scan
+ * (migration 0013 — kills the "frozen discount" false positive).
+ *
+ * `upsertDeal` is deliberately ON CONFLICT DO NOTHING so its return value stays
+ * a clean new-vs-known Telegram-dedupe signal. That means a still-cheapest
+ * listing whose whole cohort has since dropped keeps showing its original
+ * inflated `discount_pct`. This UPDATE rewrites the pricing columns to the
+ * freshly-evaluated values and stamps `revalidated_at`.
+ *
+ * Scoped to `status='open'` so it never resurrects or rewrites a sold/expired/
+ * bought row (those are archived on purpose). `found_at` is left untouched so
+ * the row's age — and thus retention — is stable and it is never re-treated as
+ * "new". Called by the scanner ONLY when `upsertDeal` reported the row already
+ * existed, so it does not fire Telegram.
+ *
+ * Returns `true` if an open row was updated, `false` if nothing matched
+ * (e.g. the row was dismissed or had already been retired).
+ */
+export async function refreshDealEconomics(
+  db: D1Database,
+  deal: DealInsert,
+): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `UPDATE deals SET
+         price_cents = ?,
+         currency = ?,
+         baseline_cents = ?,
+         second_cheapest_cents = ?,
+         gap_pct = ?,
+         avg4_cents = ?,
+         cohort_size = ?,
+         discount_pct = ?,
+         quantity = ?,
+         priority = ?,
+         revalidated_at = datetime('now')
+       WHERE product_id = ? AND status = 'open'`,
+    )
+    .bind(
+      deal.price_cents,
+      deal.currency,
+      deal.baseline_cents,
+      deal.second_cheapest_cents,
+      deal.gap_pct,
+      deal.avg4_cents,
+      deal.cohort_size,
+      deal.discount_pct,
+      deal.quantity,
+      deal.priority,
+      deal.product_id,
+    )
+    .run();
+
   return (res.meta.changes ?? 0) > 0;
 }
 
@@ -521,6 +581,7 @@ const CONFIG_PATCHABLE_COLS = new Set<string>([
   'theme_palette',
   'font',
   'deal_retention_days',
+  'deal_staleness_hours', // migration 0013 — auto-expire window for stale open deals
   'timezone',
   // Scan mode (migration 0003)
   'scan_mode',
@@ -971,6 +1032,103 @@ export async function patchDeal(
 }
 
 /**
+ * Mark a deal as BOUGHT by the owner.
+ *
+ * Does two things atomically (one D1 batch):
+ *  1. Inserts a permanent row into the standalone `purchases` ledger, snapshotting
+ *     the card details + the savings. `saved_cents` uses the same baseline the deal
+ *     card displays — the 2nd-cheapest copy when known, else the median cohort
+ *     baseline — so the ledger total matches what the owner saw.
+ *  2. Flips the deal to status='bought', dismissed=1, retired_at=now so it leaves
+ *     the open feed ("expired, but in a good way"). dismissed=1 guarantees it drops
+ *     out regardless of the EXPIRED_GRACE_HOURS window.
+ *
+ * Idempotent: a deal already status='bought' is returned unchanged (no duplicate
+ * ledger row), so a double-click never double-records a purchase.
+ *
+ * Returns the updated deal row, or null if no deal exists for the given id.
+ */
+export async function markDealBought(
+  db: D1Database,
+  id: number,
+): Promise<DealRow | null> {
+  const deal = await getDealById(db, id);
+  if (deal === null) return null;
+
+  // Guard double-buy — already bought → no second ledger row.
+  if (deal.status === 'bought') return deal;
+
+  const savedBase = deal.second_cheapest_cents ?? deal.baseline_cents;
+  const savedCents = savedBase - deal.price_cents;
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO purchases
+           (product_id, card_name, expansion_name, condition, foil, language,
+            paid_cents, saved_cents, currency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        deal.product_id,
+        deal.card_name,
+        deal.expansion_name,
+        deal.condition,
+        deal.foil,
+        deal.language,
+        deal.price_cents,
+        savedCents,
+        deal.currency,
+      ),
+    db
+      .prepare(
+        `UPDATE deals
+            SET status='bought', dismissed=1, retired_at=datetime('now')
+          WHERE id=? AND status != 'bought'`,
+      )
+      .bind(id),
+  ]);
+
+  return getDealById(db, id);
+}
+
+/**
+ * Aggregate the purchase ledger for the Purchases view.
+ *
+ * Returns the cumulative savings + spend, the purchase count, a representative
+ * currency (the most recent purchase's — the app is single-currency today), and
+ * the full ledger newest-first. All money is integer cents.
+ */
+export async function getPurchaseSummary(
+  db: D1Database,
+): Promise<{
+  total_saved_cents: number;
+  total_paid_cents: number;
+  count: number;
+  currency: string;
+  items: PurchaseRow[];
+}> {
+  const { results } = await db
+    .prepare(`SELECT * FROM purchases ORDER BY bought_at DESC`)
+    .all<PurchaseRow>();
+
+  let totalSaved = 0;
+  let totalPaid = 0;
+  for (const r of results) {
+    totalSaved += r.saved_cents;
+    totalPaid += r.paid_cents;
+  }
+
+  return {
+    total_saved_cents: totalSaved,
+    total_paid_cents: totalPaid,
+    count: results.length,
+    currency: results[0]?.currency ?? 'USD',
+    items: results,
+  };
+}
+
+/**
  * Delete deal rows older than `olderThanDays` days.
  *
  * Uses a bound parameter for the `datetime` modifier so the days value is never
@@ -991,6 +1149,131 @@ export async function pruneDeals(
     .run();
 
   return res.meta.changes ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Daily maintenance (migration 0013) — auto-expire stale open deals + prune
+// archived clutter. Called once per ~24h from the cron scheduled() handler.
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-expire OPEN deals we haven't re-confirmed within `stalenessHours`.
+ *
+ * In chunked mode a blueprint may not be re-scanned for a day+, so a false
+ * positive (a discount that has since collapsed) can linger showing its old
+ * number. Any open deal whose `revalidated_at` is older than the window is
+ * flipped to `expired` — it stops showing as a hot deal until a later scan
+ * re-confirms it (revalidateBlueprintDeals REOPEN branch). Never touches
+ * dismissed rows (a user action).
+ *
+ * No-op when `stalenessHours <= 0` (feature disabled). Rows with a NULL
+ * `revalidated_at` (pre-0013, never re-scanned) are also expired — they are by
+ * definition older than any positive window.
+ *
+ * Returns the number of rows expired.
+ */
+export async function expireStaleOpenDeals(
+  db: D1Database,
+  stalenessHours: number,
+): Promise<number> {
+  if (stalenessHours <= 0) {
+    return 0;
+  }
+
+  const res = await db
+    .prepare(
+      `UPDATE deals SET status='expired', retired_at=datetime('now')
+        WHERE status='open' AND dismissed=0
+          AND (revalidated_at IS NULL OR revalidated_at < datetime('now', ?))`,
+    )
+    .bind(`-${stalenessHours} hours`)
+    .run();
+
+  return res.meta.changes ?? 0;
+}
+
+/**
+ * Prune ARCHIVED deal clutter older than `retentionDays` — the daily cleanup
+ * that finally consumes `config.deal_retention_days`.
+ *
+ * Deletes only retired/dismissed rows (status sold/expired/bought OR
+ * dismissed=1); OPEN, non-dismissed deals are NEVER auto-deleted. Age is taken
+ * from `retired_at` when present (when the row was archived), falling back to
+ * `found_at` for dismissed-but-still-open rows.
+ *
+ * No-op when `retentionDays <= 0` (schema contract: 0 = keep forever). The
+ * purchases ledger is standalone (no FK), so history survives this prune.
+ *
+ * Returns the number of rows deleted.
+ */
+export async function pruneArchivedDeals(
+  db: D1Database,
+  retentionDays: number,
+): Promise<number> {
+  if (retentionDays <= 0) {
+    return 0;
+  }
+
+  const res = await db
+    .prepare(
+      `DELETE FROM deals
+        WHERE (status IN ('sold','expired','bought') OR dismissed = 1)
+          AND COALESCE(retired_at, found_at) < datetime('now', ?)`,
+    )
+    .bind(`-${retentionDays} days`)
+    .run();
+
+  return res.meta.changes ?? 0;
+}
+
+/**
+ * Delete ALL archived deal clutter right now, regardless of age — the manual
+ * "Clear archive" action (migration 0013). Removes every retired/dismissed row
+ * (status sold/expired/bought OR dismissed=1); OPEN, non-dismissed deals are
+ * kept. Unlike {@link pruneArchivedDeals} this has no age gate.
+ *
+ * Returns the number of rows deleted.
+ */
+export async function deleteArchivedDeals(db: D1Database): Promise<number> {
+  const res = await db
+    .prepare(
+      `DELETE FROM deals
+        WHERE status IN ('sold','expired','bought') OR dismissed = 1`,
+    )
+    .run();
+
+  return res.meta.changes ?? 0;
+}
+
+/**
+ * Delete EVERY deal row — the manual "Clear all" action (migration 0013).
+ *
+ * Unconditional wipe (no age or status filter), unlike {@link pruneDeals} whose
+ * `found_at < now` comparison misses just-inserted rows at second granularity.
+ * Live deals reappear on the next scan if still valid. The standalone purchases
+ * ledger (no FK) is unaffected.
+ *
+ * Returns the number of rows deleted.
+ */
+export async function deleteAllDeals(db: D1Database): Promise<number> {
+  const res = await db.prepare(`DELETE FROM deals`).run();
+  return res.meta.changes ?? 0;
+}
+
+/**
+ * Stamp `config.last_maintenance_at = datetime('now')` after a maintenance pass.
+ *
+ * Internal state (not user-patchable, so it is NOT in CONFIG_PATCHABLE_COLS).
+ * Gates the daily maintenance job to once per ~24h across the 1-minute cron.
+ */
+export async function setLastMaintenanceAt(db: D1Database): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE config SET last_maintenance_at = datetime('now'),
+                          updated_at = datetime('now')
+        WHERE id = 1`,
+    )
+    .run();
 }
 
 // ---------------------------------------------------------------------------
@@ -1377,6 +1660,41 @@ export async function resolveCardBlueprints(
     .prepare(sql)
     .bind(...binds)
     .all<{ id: number; expansion_id: number }>();
+
+  return results;
+}
+
+/**
+ * List every expansion that contains at least one printing of the given card,
+ * grouped and counted by set.
+ *
+ * Cache-only read — never calls CardTrader.  Matches `blueprints.name_norm = ?`
+ * exactly (no LIKE), joins to expansions for the human-readable set name and
+ * code, and counts the number of blueprint rows per set (e.g. a set may have a
+ * normal + foil + borderless printing of the same card name, each its own row).
+ *
+ * Returns up to 200 sets ordered by `e.name ASC`.  Returns an empty array when
+ * no matching blueprints exist (cache empty or card not found) — never 502.
+ *
+ * Used by GET /api/resolve/card-printings to back the desktop "print restriction
+ * droplist" (the user picks which sets to watch for a given card name).
+ */
+export async function listCardPrintingSets(
+  db: D1Database,
+  nameNorm: string,
+): Promise<{ id: number; code: string; name: string; printings: number }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT e.id AS id, e.code AS code, e.name AS name, COUNT(b.id) AS printings
+         FROM blueprints b
+         JOIN expansions e ON e.id = b.expansion_id
+        WHERE b.name_norm = ?
+        GROUP BY e.id
+        ORDER BY e.name
+        LIMIT 200`,
+    )
+    .bind(nameNorm)
+    .all<{ id: number; code: string; name: string; printings: number }>();
 
   return results;
 }

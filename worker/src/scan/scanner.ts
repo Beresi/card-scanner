@@ -46,6 +46,7 @@ import {
   getConfig,
   patchConfig,
   upsertDeal,
+  refreshDealEconomics,
   revalidateBlueprintDeals,
   markTelegramSent,
   countBlueprintsForExpansion,
@@ -988,10 +989,13 @@ async function evaluateAndUpsert(
 ): Promise<void> {
   const result = evaluateBlueprint(products, eff);
 
+  let deal: DealInsert | null = null;
+  let isNew = false;
+
   if (result !== null) {
     const candidate = result.product;
 
-    const deal: DealInsert = {
+    deal = {
       watchlist_id: item.id,
       blueprint_id: blueprintId,
       product_id: candidate.id,
@@ -1016,7 +1020,7 @@ async function evaluateAndUpsert(
       buy_url: buildBuyUrl(blueprintId, candidate.name_en, candidate.expansion?.name_en ?? null),
     };
 
-    const isNew = await upsertDeal(db, deal);
+    isNew = await upsertDeal(db, deal);
     if (isNew) {
       callbacks.onNewDeal(deal, eff);
     }
@@ -1026,9 +1030,20 @@ async function evaluateAndUpsert(
   // are no longer the active candidate — sold (listing gone) or expired
   // (superseded / failed a gate). Runs even when no deal qualifies now, so a
   // blueprint that stopped having a deal still gets its stale rows cleared.
+  // Runs BEFORE the economics refresh so a REOPENed candidate (was 'expired',
+  // qualifies again) is 'open' by the time refreshDealEconomics writes to it.
   const presentProductIds = products.map((p) => p.id);
   const candidateProductId = result?.product.id ?? null;
   await revalidateBlueprintDeals(db, blueprintId, presentProductIds, candidateProductId);
+
+  // False-positive fix (migration 0013): when the candidate deal ALREADY existed
+  // (upsertDeal was ON CONFLICT DO NOTHING, so isNew=false), rewrite its stored
+  // economics to the freshly-evaluated numbers + stamp revalidated_at. Without
+  // this the feed keeps showing the original inflated discount after the whole
+  // cohort has dropped. Brand-new rows (isNew) already carry fresh numbers.
+  if (deal !== null && !isNew) {
+    await refreshDealEconomics(db, deal);
+  }
 }
 
 // ---------------------------------------------------------------------------

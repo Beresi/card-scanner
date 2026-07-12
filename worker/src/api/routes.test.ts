@@ -1044,6 +1044,69 @@ describe('DELETE /api/deals (prune)', () => {
     const res = await DELETE_(env, `${BASE}/api/deals?older_than_days=-5`);
     expect(res.status).toBe(400);
   });
+
+  it('scope=archived removes retired/dismissed rows but keeps open deals', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    const wId = seedWatchlist(raw, { cardtrader_id: 10050, label: 'Black Lotus' });
+
+    const mk = (pid: number, name: string) =>
+      seedDeal(raw, {
+        watchlist_id: wId,
+        blueprint_id: 10050,
+        product_id: pid,
+        card_name: name,
+        price_cents: 1600,
+        currency: 'USD',
+        baseline_cents: 3200,
+        cohort_size: 10,
+        discount_pct: 50,
+      });
+    mk(4001, 'Open'); // stays
+    mk(4002, 'Expired');
+    mk(4003, 'Sold');
+    raw.exec(`UPDATE deals SET status='expired', retired_at=datetime('now') WHERE product_id=4002`);
+    raw.exec(`UPDATE deals SET status='sold', retired_at=datetime('now') WHERE product_id=4003`);
+
+    const res = await DELETE_(env, `${BASE}/api/deals?scope=archived`);
+    expect(res.status).toBe(200);
+    expect((await res.json<{ deleted: number }>()).deleted).toBe(2);
+
+    const listRes = await GET(env, `${BASE}/api/deals?status=all`);
+    const remaining = await listRes.json<DealRow[]>();
+    expect(remaining.map((d) => d.product_id)).toEqual([4001]);
+  });
+
+  it('scope=all removes every deal', async () => {
+    const { db, raw } = makeD1();
+    const env = makeEnv(db);
+    const wId = seedWatchlist(raw, { cardtrader_id: 10050, label: 'Black Lotus' });
+    seedDeal(raw, {
+      watchlist_id: wId,
+      blueprint_id: 10050,
+      product_id: 4101,
+      card_name: 'Open',
+      price_cents: 1600,
+      currency: 'USD',
+      baseline_cents: 3200,
+      cohort_size: 10,
+      discount_pct: 50,
+    });
+
+    const res = await DELETE_(env, `${BASE}/api/deals?scope=all`);
+    expect(res.status).toBe(200);
+    expect((await res.json<{ deleted: number }>()).deleted).toBe(1);
+
+    const listRes = await GET(env, `${BASE}/api/deals?status=all`);
+    expect((await listRes.json<DealRow[]>()).length).toBe(0);
+  });
+
+  it('returns 400 on an unknown scope value', async () => {
+    const { db } = makeD1();
+    const env = makeEnv(db);
+    const res = await DELETE_(env, `${BASE}/api/deals?scope=everything`);
+    expect(res.status).toBe(400);
+  });
 });
 
 // ---------------------------------------------------------------------------

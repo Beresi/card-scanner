@@ -22,6 +22,7 @@ import type { Deal } from '../../api/types';
 vi.mock('../../api/client', () => ({
   getDeals: vi.fn(),
   patchDeal: vi.fn(),
+  deleteWatchItem: vi.fn(),
   cartAdd: vi.fn(),
   cartRemove: vi.fn(),
   // ApiError is used by the view for instanceof checks — keep the real class.
@@ -85,6 +86,7 @@ function makeDeal(overrides: Partial<Deal> = {}): Deal {
     dismissed: 0,
     status: 'open',
     retired_at: null,
+    revalidated_at: null,
     telegram_sent: 0,
     telegram_sent_at: null,
     ...overrides,
@@ -212,14 +214,15 @@ describe('DealFeed', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: Seen calls patchDeal with {seen:true}; disabled when already seen
+  // Test 4: Bought calls patchDeal({bought:true}), opens the remove-from-
+  // watchlist confirmation, and the button is disabled when already bought.
   // -------------------------------------------------------------------------
-  it('seen: calls patchDeal({seen:true}); Seen button disabled when deal.seen===1', async () => {
+  it('bought: calls patchDeal({bought:true}), prompts to remove from watchlist; disabled when status===bought', async () => {
     const user = userEvent.setup();
 
-    const seenDeal = makeDeal({ id: 3, seen: 1, card_name: 'Dark Ritual' });
-    mockGetDeals.mockResolvedValueOnce([DEAL_A, seenDeal]);
-    mockPatchDeal.mockResolvedValueOnce({ ...DEAL_A, seen: 1 });
+    const boughtDeal = makeDeal({ id: 3, status: 'bought', dismissed: 1, card_name: 'Dark Ritual' });
+    mockGetDeals.mockResolvedValueOnce([DEAL_A, boughtDeal]);
+    mockPatchDeal.mockResolvedValueOnce({ ...DEAL_A, status: 'bought', dismissed: 1 });
 
     renderFeed();
 
@@ -227,17 +230,27 @@ describe('DealFeed', () => {
     expect(await screen.findByText('Lightning Bolt')).toBeInTheDocument();
     expect(await screen.findByText('Dark Ritual')).toBeInTheDocument();
 
-    // Click Seen on the unseen deal (Lightning Bolt — first "Mark seen" button)
-    const seenBtns = screen.getAllByRole('button', { name: 'Mark seen' });
-    // First button belongs to Lightning Bolt (unseen), second to Dark Ritual (already seen)
-    await user.click(seenBtns[0]);
+    // The already-bought card's Bought button is disabled.
+    expect(
+      screen.getByRole('button', { name: 'Mark Dark Ritual as bought' }),
+    ).toBeDisabled();
+
+    // Click Bought on the open deal (Lightning Bolt).
+    await user.click(
+      screen.getByRole('button', { name: 'Mark Lightning Bolt as bought' }),
+    );
 
     await waitFor(() => {
-      expect(mockPatchDeal).toHaveBeenCalledWith(DEAL_A.id, { seen: true });
+      expect(mockPatchDeal).toHaveBeenCalledWith(DEAL_A.id, { bought: true });
     });
 
-    // The Dark Ritual Seen button should be disabled because seen===1
-    expect(seenBtns[1]).toBeDisabled();
+    // After success, the confirm-remove-from-watchlist modal appears.
+    expect(
+      await screen.findByText(/Stop watching\s+this card/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Remove from watchlist' }),
+    ).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------

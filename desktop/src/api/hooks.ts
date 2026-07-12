@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   cartAdd,
   cartRemove,
+  clearDeals,
   createWatchItem,
   deleteWatchItem,
   getCatalogProgress,
@@ -10,8 +11,10 @@ import {
   getConfig,
   getDeals,
   getHealth,
+  getPurchases,
   getResolveBlueprints,
   getResolveCards,
+  getCardPrintings,
   getResolveExpansions,
   getScanRuns,
   getWatchlist,
@@ -27,7 +30,7 @@ import {
   runLocalCatalogResync,
 } from './localScan';
 import type { CatalogResyncResult, LocalScanStatus } from './localScan';
-import type { Cart, CatalogProgress, Config, Deal, Health, ResolveBlueprint, ResolveCard, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
+import type { Cart, CatalogProgress, Config, Deal, Health, PurchaseSummary, ResolveBlueprint, ResolveCard, ResolveCardPrinting, ResolveExpansion, ResettableField, ScanNowResult, ScanRun, WatchItem, WatchItemCreate, WatchItemPatch } from './types';
 
 // ---------------------------------------------------------------------------
 // Filter shape — used by the Deal Feed command bar
@@ -57,22 +60,54 @@ export function useDeals(filters: DealFilters = {}) {
 }
 
 /**
- * useDealMutation — mark-seen / dismiss a deal.
+ * useDealMutation — dismiss a deal, or mark it bought.
  *
- * Invalidates ['deals'] on success so all active deal queries (regardless of
- * the filter combination) re-fetch and reflect the change.
+ * `bought:true` retires the deal AND records a purchase-ledger entry server-side,
+ * so on success we also invalidate ['purchases'] (the Purchases view) alongside
+ * ['deals']. (`seen` is retained in the type for back-compat; the UI no longer
+ * sends it.)
  */
 export function useDealMutation() {
   const qc = useQueryClient();
   return useMutation<
     Deal,
     Error,
-    { id: number; patch: { seen?: boolean; dismissed?: boolean } }
+    { id: number; patch: { seen?: boolean; dismissed?: boolean; bought?: boolean } }
   >({
     mutationFn: ({ id, patch }) => patchDeal(id, patch),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['deals'] });
+      void qc.invalidateQueries({ queryKey: ['purchases'] });
     },
+  });
+}
+
+/**
+ * useClearDeals — DELETE /api/deals?scope=… (bulk clear).
+ *
+ * 'archived' removes retired/dismissed clutter (keeping live open deals);
+ * 'all' wipes every deal row. Invalidates ['deals'] so the feed refetches.
+ */
+export function useClearDeals() {
+  const qc = useQueryClient();
+  return useMutation<{ deleted: number }, Error, 'archived' | 'all'>({
+    mutationFn: (scope) => clearDeals(scope),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['deals'] });
+    },
+  });
+}
+
+/**
+ * usePurchases — the cumulative purchase ledger (GET /api/purchases).
+ *
+ * Backs the Purchases view (total saved over time + the bought-card list).
+ * Invalidated by useDealMutation whenever a deal is marked bought.
+ */
+export function usePurchases() {
+  return useQuery<PurchaseSummary, Error>({
+    queryKey: ['purchases'],
+    queryFn: () => getPurchases(),
   });
 }
 
@@ -308,6 +343,25 @@ export function useResolveCards(q: string) {
     queryKey: ['resolve', 'cards', q] as const,
     queryFn: () => getResolveCards(q),
     enabled: q.trim().length >= 2,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * useCardPrintings — list every set a card is printed in.
+ *
+ * Query key: ['resolve', 'cardPrintings', name]
+ * Enabled only when name is non-null and has at least 2 non-space chars (server
+ * returns [] below that). staleTime 5 min — the catalog grows slowly between cron
+ * runs. Cache-only on the server; never hits CardTrader; never 502.
+ *
+ * Backs the print-restriction droplist (PrintingPicker).
+ */
+export function useCardPrintings(name: string | null) {
+  return useQuery<ResolveCardPrinting[], Error>({
+    queryKey: ['resolve', 'cardPrintings', name] as const,
+    queryFn: () => getCardPrintings(name!),
+    enabled: name != null && name.trim().length >= 2,
     staleTime: 5 * 60_000,
   });
 }
