@@ -315,9 +315,11 @@ export interface DealRow {
   seen: 0 | 1;
   dismissed: 0 | 1;
   /**
-   * Lifecycle: 'open' = active; 'sold' = gone; 'expired' = no longer candidate
-   * (migration 0009); 'bought' = the owner confirmed a purchase (migration 0012).
-   * 'bought' rows always carry dismissed=1 so they drop out of the open feed.
+   * Lifecycle: 'open' = active; 'sold' = listing gone (archived missed chance);
+   * 'expired' = staleness-parked only (open deal not re-confirmed within
+   * deal_staleness_hours, migration 0013 — a still-listed deal that stopped
+   * qualifying is deleted, not expired); 'bought' = the owner confirmed a
+   * purchase (migration 0012; always dismissed=1 so it drops out of the feed).
    */
   status: 'open' | 'sold' | 'expired' | 'bought';
   retired_at: string | null;   // UTC TEXT; set when status leaves 'open'

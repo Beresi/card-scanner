@@ -5,9 +5,9 @@
  *
  * Transitions covered:
  *  - present + is candidate            → stays 'open'
- *  - present + not the candidate       → 'expired'
- *  - absent from listings              → 'sold'
- *  - no candidate at all               → remaining present open → 'expired'
+ *  - present + not the candidate       → DELETED (worthless / no longer a deal)
+ *  - absent from listings              → 'sold' (archived missed chance)
+ *  - no candidate at all               → remaining present open → DELETED
  *  - empty listings                    → all open → 'sold'
  *  - dismissed rows are never touched
  *  - a candidate previously 'expired'  → reopened to 'open'
@@ -52,6 +52,15 @@ function dealIdFor(productId: number): number {
   return row.id;
 }
 
+/** True if a deal row still exists for the given product_id. */
+function dealExists(productId: number): boolean {
+  return (
+    (raw.prepare('SELECT 1 FROM deals WHERE product_id = ?').get(productId) as
+      | { 1: number }
+      | undefined) !== undefined
+  );
+}
+
 describe('revalidateBlueprintDeals — lifecycle transitions', () => {
   it('keeps the current candidate open', async () => {
     seedOpenDeal(111, 180);
@@ -61,12 +70,10 @@ describe('revalidateBlueprintDeals — lifecycle transitions', () => {
     expect(deal!.retired_at).toBeNull();
   });
 
-  it("marks a still-listed non-candidate 'expired'", async () => {
+  it('deletes a still-listed non-candidate (worthless / no longer a deal)', async () => {
     seedOpenDeal(111, 180);
     await revalidateBlueprintDeals(db, BP, [111, 222], 222);
-    const deal = await getDealById(db, dealIdFor(111));
-    expect(deal!.status).toBe('expired');
-    expect(deal!.retired_at).not.toBeNull();
+    expect(dealExists(111)).toBe(false);
   });
 
   it("marks a vanished listing 'sold'", async () => {
@@ -77,11 +84,10 @@ describe('revalidateBlueprintDeals — lifecycle transitions', () => {
     expect(deal!.retired_at).not.toBeNull();
   });
 
-  it("expires remaining open deals when there is no qualifying candidate", async () => {
+  it('deletes remaining present open deals when there is no qualifying candidate', async () => {
     seedOpenDeal(111, 180);
     await revalidateBlueprintDeals(db, BP, [111], null);
-    const deal = await getDealById(db, dealIdFor(111));
-    expect(deal!.status).toBe('expired');
+    expect(dealExists(111)).toBe(false);
   });
 
   it("sells every open deal when the blueprint has zero listings", async () => {

@@ -441,23 +441,36 @@ export async function refreshDealEconomics(
 
 /**
  * Re-validate the open deals for one freshly-scanned blueprint and retire any
- * that are no longer the active candidate (deal lifecycle, migration 0009).
+ * that are no longer the active candidate (deal lifecycle, migration 0009;
+ * delete-vs-archive split, migration 0013).
  *
  * Inputs for a blueprint we just fetched listings for:
  *  - presentProductIds  = every product_id currently listed (the cheapest-25).
  *  - candidateProductId = the product_id of the deal the engine flagged this run,
  *                         or null when no deal qualifies now.
  *
+ * The engine has ALREADY decided "is this a deal?" using the item's effective
+ * detection mode (so a still-under-ceiling price-mode alert is a valid candidate
+ * and is NOT retired). We map the outcome to the owner's two buckets:
+ *
  * Transitions (only touch status='open', dismissed=0 rows — never user-dismissed):
- *  - product_id NOT present                → 'sold'    (listing gone).
- *  - present but product_id != candidate   → 'expired' (superseded / failed a gate,
- *                                             e.g. the new gap gate).
- *  - product_id == candidate               → stays 'open'.
- *  - candidate previously 'expired'        → reopened (it qualifies again).
+ *  - product_id NOT present                → 'sold'   (listing gone → ARCHIVED as a
+ *                                            missed chance; hidden from the feed,
+ *                                            kept for history, pruned by retention).
+ *  - present but product_id != candidate   → DELETED  (still listed but no longer a
+ *                                            deal — e.g. the discount collapsed to
+ *                                            ~0% — so it is worthless clutter, not a
+ *                                            missed chance. Removed outright.)
+ *  - product_id == candidate               → stays 'open' (refreshed elsewhere).
+ *  - candidate previously 'expired'        → reopened (a staleness-parked deal that
+ *                                            qualifies again).
  *
  * 'sold' rows are never reopened (a gone listing is gone); 'dismissed' is a user
- * action and is left alone. retired_at is stamped when a row leaves 'open'.
- * Runs as one ordered D1 batch (transactional): sold → reopen → expire.
+ * action and is left alone. Deleting a worthless deal drops its Telegram-dedupe
+ * memory — acceptable, since if it genuinely becomes a deal again it warrants a
+ * fresh alert. ('expired' is now produced only by the daily staleness sweep for
+ * blueprints that haven't re-scanned — see expireStaleOpenDeals.)
+ * Runs as one ordered D1 batch: sold → reopen → delete-non-candidate.
  */
 export async function revalidateBlueprintDeals(
   db: D1Database,
@@ -501,19 +514,23 @@ export async function revalidateBlueprintDeals(
           WHERE blueprint_id=? AND product_id=? AND status='expired'`,
       ).bind(blueprintId, candidateProductId),
     );
-    // 3. EXPIRED — still-present open deals that are not the current candidate.
+    // 3. DELETE — still-present open deals that are not the current candidate.
+    //    The sold pass above already retired the gone listings, so every
+    //    remaining 'open' row here is a present-but-worthless deal (discount
+    //    collapsed / superseded) → remove it outright, not archive it.
     stmts.push(
       db.prepare(
-        `UPDATE deals SET status='expired', retired_at=datetime('now')
+        `DELETE FROM deals
           WHERE blueprint_id=? AND status='open' AND dismissed=0
             AND product_id != ?`,
       ).bind(blueprintId, candidateProductId),
     );
   } else {
-    // No qualifying candidate now → expire every remaining present open deal.
+    // No qualifying candidate now → every remaining present open deal is worthless
+    // (present in the listings but no longer a deal) → delete them all.
     stmts.push(
       db.prepare(
-        `UPDATE deals SET status='expired', retired_at=datetime('now')
+        `DELETE FROM deals
           WHERE blueprint_id=? AND status='open' AND dismissed=0`,
       ).bind(blueprintId),
     );

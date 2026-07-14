@@ -94,8 +94,14 @@ CREATE TABLE IF NOT EXISTS deals (
   found_at          TEXT    NOT NULL DEFAULT (datetime('now')),
   seen              INTEGER NOT NULL DEFAULT 0,        -- boolean: 0/1
   dismissed         INTEGER NOT NULL DEFAULT 0,        -- boolean: 0/1
-  -- Lifecycle (migration 0009): 'open' = active; 'sold' = listing gone;
-  -- 'expired' = still listed but no longer the qualifying candidate.
+  -- Lifecycle (migration 0009; delete-vs-archive split 0013):
+  --   'open'    = active deal, shown in the feed.
+  --   'sold'    = listing gone → ARCHIVED (missed chance); hidden from the open
+  --               feed, kept for history, pruned by deal_retention_days.
+  --   'expired' = staleness-parked only (open deal not re-confirmed within
+  --               deal_staleness_hours). A still-listed deal that simply stopped
+  --               qualifying (e.g. discount collapsed to ~0%) is DELETED outright,
+  --               not expired — see revalidateBlueprintDeals.
   status            TEXT    NOT NULL DEFAULT 'open',
   retired_at        TEXT,                              -- UTC TEXT; set when status leaves 'open'
   -- Re-priced timestamp (migration 0013): stamped on insert and every time a
