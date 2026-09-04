@@ -1,20 +1,21 @@
 // Card // Broker — Tauri v2 host library
 //
 // The host is intentionally THIN:
-//   - open_buy_url          : opens CardTrader Buy links in the OS system browser
-//   - get_local_scan_status : reports presence flags (no values) for vars-file credentials
-//   - local_scan_available  : convenience bool — required keys present in the vars file?
-//   - run_local_scan        : spawns the bundled scan-local sidecar; passes the vars-file
-//                             path via CARD_BROKER_VARS_FILE env; returns { started, run_id }
-//                             without blocking on completion
-//   - run_local_catalog_resync : spawns the same sidecar with CARD_BROKER_TASK=catalog-resync
-//                             for a full-heal blueprint re-pull; returns { started, total_sets }
-//                             without blocking on completion
+//   - open_buy_url : opens CardTrader Buy links in the OS system browser
 //
-// Credentials come from worker/.dev.vars.local (or .dev.vars) — not the OS keychain.
-// Business logic (scanning, deal detection) lives in the Cloudflare Worker — never here.
-
-mod commands;
+// The host used to also spawn a bundled "scan-local" sidecar for the deep-sweep
+// scan and the catalog full-heal. That sidecar existed only to run work longer
+// than a Cloudflare Worker's CPU/subrequest budget allowed, and it reached the
+// database over the D1 REST API. With the backend self-hosted those limits are
+// gone, so both jobs are plain API routes (POST /api/scan/deep-sweep and
+// POST /api/catalog/resync) served in-process by the local backend.
+//
+// Keeping the sidecar would have been a correctness bug, not just dead weight:
+// it writes to whatever database its own credentials name, which after the
+// migration is the old cloud D1 — "Scan Now" would have looked like it worked
+// while its results landed where the app no longer reads.
+//
+// Business logic (scanning, deal detection) lives in the backend — never here.
 
 use tauri_plugin_opener::OpenerExt;
 
@@ -33,14 +34,7 @@ fn open_buy_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![
-            open_buy_url,
-            commands::get_local_scan_status,
-            commands::local_scan_available,
-            commands::run_local_scan,
-            commands::run_local_catalog_resync,
-        ])
+        .invoke_handler(tauri::generate_handler![open_buy_url])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

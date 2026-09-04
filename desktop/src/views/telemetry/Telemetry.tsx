@@ -39,7 +39,7 @@ export interface TelemetryProps {
   onScanNow?: () => void;
   scanning?: boolean;
   scanTarget: number;
-  /** Whether local scan credentials are configured on this device. */
+  /** Whether the backend is reachable, i.e. a scan can be started. */
   scanConfigured?: boolean;
   /**
    * The run id returned by run_local_scan when the user triggered the scan.
@@ -272,7 +272,7 @@ export function Telemetry({
         )}
       </div>
 
-      {/* Gate: disabled + explanatory tooltip when local scan is not configured. */}
+      {/* Gate: disabled + explanatory tooltip when the backend is unreachable. */}
       <Btn
         variant="primary"
         disabled={scanning || !scanConfigured}
@@ -281,12 +281,12 @@ export function Telemetry({
           scanning
             ? 'Scan in progress'
             : !scanConfigured
-            ? 'Local scan is not configured — set it up in Settings → Local Scan'
+            ? 'Backend not running — start it with install-service.ps1'
             : 'Run a scan now'
         }
         title={
           !scanConfigured
-            ? "Local scan isn't set up on this device — configure it in Settings → Local Scan."
+            ? "The Card // Broker backend isn't running — start it with install-service.ps1."
             : undefined
         }
         style={{ width: '100%' }}

@@ -22,9 +22,9 @@
  * takes ~13 minutes.
  */
 
-import type { Env } from '../src/index';
-import { createCardTraderClient } from '../src/cardtrader/client';
-import { syncBlueprints, markExpansionCatalogSynced } from '../src/db/repo';
+import type { Env } from '../index';
+import { createCardTraderClient } from '../cardtrader/client';
+import { syncBlueprints, markExpansionCatalogSynced } from '../db/repo';
 
 export interface ResyncOptions {
   /** Restrict to these expansion ids. Empty/undefined = all MTG sets. */

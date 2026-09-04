@@ -15,6 +15,8 @@ import type { Env } from '../index';
 import { createCardTraderClient } from '../cardtrader/client';
 import { CardTraderError } from '../cardtrader/types';
 import { syncBlueprints, markExpansionCatalogSynced } from '../db/repo';
+import { resyncCatalog } from '../scan/catalogResync';
+import { detach } from './detach';
 
 export const catalogRouter = new Hono<{ Bindings: Env }>();
 
@@ -94,4 +96,51 @@ catalogRouter.post('/sync', async (c) => {
   } catch (err) {
     return handleError(err, c);
   }
+});
+
+// ---------------------------------------------------------------------------
+// POST /resync — full-heal blueprint re-pull (Settings → Maintenance).
+//
+// Re-pulls EVERY MTG set's blueprints, bypassing the cron's "new sets only"
+// refresh window. At CardTrader's ~1 req/s this runs for roughly 13 minutes, so
+// the job is detached: the response carries the target set count as soon as the
+// list is resolved, and search results improve live as sets land.
+//
+// Replaces the sidecar's CARD_BROKER_TASK=catalog-resync path. Same
+// resyncCatalog() function, now called in-process against whichever database
+// this backend is bound to — the sidecar would still be writing to cloud D1.
+//
+// Body is optional: { ids?: number[], emptyOnly?: boolean } narrows the run.
+// ---------------------------------------------------------------------------
+
+catalogRouter.post('/resync', async (c) => {
+  // A body is optional here — unlike /sync, the default (every set) is the
+  // common case, so an absent or unparseable body is not an error.
+  let body: Record<string, unknown> = {};
+  try { body = await c.req.json<Record<string, unknown>>(); } catch { /* default */ }
+
+  const rawIds = body['ids'];
+  const ids = Array.isArray(rawIds)
+    ? [...new Set(rawIds)].filter(
+        (v): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0,
+      )
+    : undefined;
+  const emptyOnly = body['emptyOnly'] === true;
+
+  // resyncCatalog reports the target count via onStart, before the first
+  // CardTrader call — that is what the response waits for.
+  let signalStart: (totalSets: number) => void = () => {};
+  const started = new Promise<number>((resolve) => { signalStart = resolve; });
+
+  const job = resyncCatalog(c.env, { ids, emptyOnly }, { onStart: signalStart });
+  detach(c, job, 'catalog-resync');
+
+  // onStart wins unless the job throws while resolving the set list; the
+  // summary fallback keeps this from hanging in that case.
+  const totalSets = await Promise.race([
+    started,
+    job.then((s) => s.totalSets).catch(() => 0),
+  ]);
+
+  return c.json({ started: true, totalSets });
 });

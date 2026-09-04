@@ -27,7 +27,7 @@
  */
 
 import { loadEnv } from './env-local';
-import { resyncCatalog } from './catalogResync';
+import { resyncCatalog } from '../src/scan/catalogResync';
 
 function log(msg: string): void {
   process.stderr.write(msg + '\n');

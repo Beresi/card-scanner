@@ -1,21 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the Card // Broker main window. Minimal allowlist — only what the webview actually uses.",
-  "windows": ["main"],
+  "description": "Default capability set for the Card // Broker main window. Minimal allowlist - only what the webview actually uses. The shell:allow-execute grant for the scan-local sidecar was removed with the sidecar itself; the deep-sweep scan and catalog re-sync are now backend API routes, so the webview needs no process-spawning capability at all.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
-    "opener:default",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "scan-local",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    },
-    "shell:allow-kill"
+    "opener:default"
   ]
 }

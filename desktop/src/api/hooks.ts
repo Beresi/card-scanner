@@ -203,7 +203,7 @@ export function useScanRuns(activeLocalRunId: number | null = null) {
     queryKey: ['scanRuns'] as const,
     queryFn: getScanRuns,
     refetchInterval: () => {
-      // Poll fast only while the user has an in-flight local scan.
+      // Poll fast only while the user has an in-flight deep sweep.
       if (activeLocalRunId !== null) {
         return 2_000;
       }
@@ -457,11 +457,11 @@ export function useCartRemove() {
 }
 
 // ---------------------------------------------------------------------------
-// Local scan hooks (Tauri sidecar — device-local, not cloud)
+// Long-running job hooks (deep sweep + catalog heal, run by the local backend)
 // ---------------------------------------------------------------------------
 
 /**
- * useLocalScanStatus — queries whether local scan credentials are configured
+ * useLocalScanStatus — probes whether the backend is up and its database reachable,
  * on this device.
  *
  * Device-local data (not cloud server state), but Query is correct here for
@@ -480,9 +480,9 @@ export function useLocalScanStatus() {
 }
 
 /**
- * useRunLocalScan — fires the local sidecar scan (detached).
+ * useRunLocalScan — starts a deep sweep (POST /api/scan/deep-sweep, detached).
  *
- * Returns once the sidecar emits its "started" event — the scan continues
+ * Returns once the server has opened the scan_runs row — the scan continues
  * running in the background. Invalidates ['scanRuns'] and ['health'] on
  * success so the Health view shows the in-progress run immediately.
  *
@@ -502,11 +502,11 @@ export function useRunLocalScan() {
 }
 
 /**
- * useRunLocalCatalogResync — fires the local sidecar in catalog-resync mode
- * (detached) for a full-heal blueprint re-pull, bypassing the cron's "new sets
- * only" refresh window.
+ * useRunLocalCatalogResync — starts a full-heal blueprint re-pull
+ * (POST /api/catalog/resync, detached), bypassing the periodic "new sets only"
+ * refresh window.
  *
- * Returns once the sidecar emits its "started" event; the re-pull continues for
+ * Returns once the server knows the set count; the re-pull continues for
  * ~13 minutes. Invalidates ['catalogProgress'] and the ['resolve'] caches so
  * the add-card search picks up newly-pulled cards as they land.
  */

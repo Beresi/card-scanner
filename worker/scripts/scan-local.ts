@@ -57,7 +57,7 @@
 import { loadEnv } from './env-local';
 import { runScan } from '../src/scan/scanner';
 import type { ScanSummary } from '../src/scan/scanner';
-import { resyncCatalog } from './catalogResync';
+import { resyncCatalog } from '../src/scan/catalogResync';
 
 // ---------------------------------------------------------------------------
 // JSON-line emitters (stdout = machine; stderr = human)

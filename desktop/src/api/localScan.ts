@@ -1,72 +1,62 @@
 /**
- * localScan.ts — typed wrappers around the Tauri sidecar scan commands.
+ * localScan.ts — the two long-running maintenance jobs: the deep-sweep scan
+ * ("Scan Now") and the catalog full-heal (Settings → Maintenance).
  *
- * The three invoke commands are:
- *   get_local_scan_status  — returns { configured, hasTelegram }
- *   local_scan_available   — boolean shorthand for status.configured
- *   run_local_scan         — fires the sidecar (detached); returns once "started" event emits
+ * These used to be Tauri `invoke` calls that spawned a bundled sidecar process.
+ * The sidecar existed for ONE reason: to run a sweep longer than a Cloudflare
+ * Worker's CPU/subrequest budget allowed. It reached the database over the
+ * Cloudflare D1 REST API.
  *
- * Credentials are configured via worker/.dev.vars.local (reuses .dev.vars) on the
- * host machine — not entered through the UI. set_local_scan_config is removed.
+ * The backend is now self-hosted and has no such budget, so both jobs run
+ * in-process behind ordinary API routes:
  *
- * Non-Tauri context (plain browser dev session or invoke throws):
- *   getLocalScanStatus → { configured: false, hasTelegram: false } (never throws)
- *   runLocalScan       → throws Error (surfaced to the UI as a toast)
+ *   runLocalScan()          → POST /api/scan/deep-sweep
+ *   runLocalCatalogResync() → POST /api/catalog/resync
+ *
+ * That is not just a simplification — keeping the sidecar would have been a
+ * correctness bug. It writes to whichever database its own credentials point at,
+ * which after the migration is the OLD cloud D1: "Scan Now" would have appeared
+ * to work while its results landed somewhere the app no longer reads.
+ *
+ * Both routes are detached server-side. They return as soon as the job has an id
+ * to report — `started: true` means STARTED, not finished — and the UI polls
+ * scan_runs / catalog progress from there. The exported shapes are unchanged, so
+ * App.tsx and the hooks that consume them did not need to change.
+ *
+ * These work in a plain browser tab as well as the desktop app; there is no
+ * longer any Tauri dependency here.
  */
 
-/**
- * True only inside the Tauri webview, where the Rust host injects
- * window.__TAURI_INTERNALS__. In a plain browser tab (Vite `npm run dev`) this
- * is undefined, and any invoke() would throw the cryptic
- * "Cannot read properties of undefined (reading 'invoke')". Guarding up front
- * lets us return a clear, actionable message instead.
- */
-function isTauriAvailable(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !==
-      'undefined'
-  );
-}
-
-/** Message shown whenever a local-scan command is attempted from a browser tab. */
-const NOT_DESKTOP_MSG =
-  'Local scan is only available in the Card // Broker desktop app — you appear to be in a browser tab. Launch the desktop app (or `npm run tauri dev`) and try again.';
-
-// Dynamically import invoke so tree-shaking works in plain-browser builds and
-// the import itself does not throw when @tauri-apps/api is absent.
-async function invokeOrNull<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
-  if (!isTauriAvailable()) { return null; }
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<T>(cmd, args);
-  } catch {
-    return null;
-  }
-}
+import { apiFetch } from './client';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** Status returned by get_local_scan_status / getLocalScanStatus(). */
+/** Status returned by getLocalScanStatus(). */
 export interface LocalScanStatus {
-  /** True when all four required credentials are present on this device. */
+  /** True when the backend is reachable, i.e. the jobs below can be started. */
   configured: boolean;
-  /** True when Telegram credentials are also stored alongside the required set. */
+  /** True when the backend has Telegram credentials, so pushes will be sent. */
   hasTelegram: boolean;
 }
 
-/** Result from run_local_scan / runLocalScan(). */
+/** Result from runLocalScan(). */
 export interface LocalScanResult {
   started: boolean;
   runId: number | null;
 }
 
-/** Result from run_local_catalog_resync / runLocalCatalogResync(). */
+/** Result from runLocalCatalogResync(). */
 export interface CatalogResyncResult {
   started: boolean;
   totalSets: number | null;
+}
+
+/** The subset of GET /api/health this module reads. */
+interface HealthProbe {
+  ok?: boolean;
+  db_ok?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,24 +64,25 @@ export interface CatalogResyncResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the local scan configuration status from OS secure storage.
+ * Reports whether the deep-sweep and catalog jobs can be started, by probing
+ * the backend's health endpoint.
  *
- * Falls back to { configured: false, hasTelegram: false } when:
- *   - the app is running in a plain browser (no Tauri host)
- *   - invoke throws for any reason (keychain unavailable, command not found)
+ * `configured` used to mean "are the sidecar's credentials present on this
+ * device". With the work moved server-side it means "is the backend up and its
+ * database reachable" — the backend owns the credentials now.
  *
- * Never throws — callers can safely call this unconditionally.
+ * Never throws: an unreachable backend returns
+ * { configured: false, hasTelegram: false }, which disables the Scan Now button
+ * rather than letting it fail on click.
  */
 export async function getLocalScanStatus(): Promise<LocalScanStatus> {
   try {
-    const result = await invokeOrNull<LocalScanStatus>('get_local_scan_status');
-    if (result && typeof result.configured === 'boolean') {
-      return result;
-    }
+    const health = await apiFetch<HealthProbe>('/api/health');
+    const up = health.ok === true && health.db_ok === true;
+    return { configured: up, hasTelegram: up };
   } catch {
-    // Intentionally ignored — fall through to default.
+    return { configured: false, hasTelegram: false };
   }
-  return { configured: false, hasTelegram: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -99,31 +90,20 @@ export async function getLocalScanStatus(): Promise<LocalScanStatus> {
 // ---------------------------------------------------------------------------
 
 /**
- * Fires the local sidecar scan (detached).
+ * Starts a deep sweep — every watched set in one uncapped pass.
  *
- * Returns once the sidecar emits its "started" event — the scan continues
- * running long after this promise resolves. Poll scan_runs / health for progress.
+ * Resolves as soon as the server has opened the scan_runs row and returned its
+ * id; the sweep itself continues for minutes afterwards. Poll scan_runs / health
+ * for progress.
  *
- * Throws an Error with a human-readable message when:
- *   - not configured (credentials missing)
- *   - the Tauri host is unavailable (plain browser session)
- *   - the sidecar is missing or dies before the "started" event
+ * Throws with a human-readable message if the backend cannot be reached, which
+ * the caller surfaces as a toast.
  */
 export async function runLocalScan(): Promise<LocalScanResult> {
-  if (!isTauriAvailable()) { throw new Error(NOT_DESKTOP_MSG); }
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const result = await invoke<LocalScanResult>('run_local_scan');
-    return result;
+    return await apiFetch<LocalScanResult>('/api/scan/deep-sweep', { method: 'POST' });
   } catch (err) {
-    // invoke throws a string message when the Tauri command returns Err(String)
-    const msg =
-      typeof err === 'string'
-        ? err
-        : err instanceof Error
-        ? err.message
-        : 'Local scan failed to start.';
-    throw new Error(msg);
+    throw new Error(describeFailure(err, 'Deep sweep failed to start.'));
   }
 }
 
@@ -132,28 +112,34 @@ export async function runLocalScan(): Promise<LocalScanResult> {
 // ---------------------------------------------------------------------------
 
 /**
- * Fires the local sidecar in catalog-resync mode (detached) — a full-heal
- * re-pull of every set's blueprints into the shared D1, bypassing the cron's
- * "new sets only" refresh window.
+ * Starts a full-heal re-pull of every set's blueprints, bypassing the periodic
+ * refresh's "new sets only" window.
  *
- * Returns once the sidecar emits its "started" event (with the set count); the
- * re-pull continues for ~13 minutes afterward. Search results update live as
- * sets are re-pulled. Same credentials and failure modes as runLocalScan().
+ * Resolves once the server knows how many sets it will pull; the re-pull runs
+ * for roughly 13 minutes at CardTrader's ~1 req/s. Search results improve live
+ * as sets land.
  */
 export async function runLocalCatalogResync(): Promise<CatalogResyncResult> {
-  if (!isTauriAvailable()) { throw new Error(NOT_DESKTOP_MSG); }
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const result = await invoke<CatalogResyncResult>('run_local_catalog_resync');
-    return result;
+    return await apiFetch<CatalogResyncResult>('/api/catalog/resync', { method: 'POST' });
   } catch (err) {
-    const msg =
-      typeof err === 'string'
-        ? err
-        : err instanceof Error
-        ? err.message
-        : 'Catalog re-sync failed to start.';
-    throw new Error(msg);
+    throw new Error(describeFailure(err, 'Catalog re-sync failed to start.'));
   }
 }
 
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/**
+ * Turn a fetch/ApiError into something worth showing in a toast. A failure here
+ * is almost always "the backend is not running", so say that rather than
+ * surfacing a bare TypeError from fetch.
+ */
+function describeFailure(err: unknown, fallback: string): string {
+  if (err instanceof TypeError) {
+    return 'Cannot reach the Card // Broker backend. Check that it is running (install-service.ps1 -Status).';
+  }
+  if (err instanceof Error && err.message) { return err.message; }
+  return fallback;
+}

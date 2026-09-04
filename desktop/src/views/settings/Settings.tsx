@@ -339,10 +339,10 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
   const cfg = useConfigMutation();
   const { data: catalogProg } = useCatalogProgress();
 
-  // Local scan status — read-only; credentials live in worker/.dev.vars.local.
+  // Backend reachability — read-only; probes GET /api/health.
   const { data: localScanStatus } = useLocalScanStatus();
 
-  // Local catalog re-sync (full heal) — fires the device-local sidecar, not the cron.
+  // Catalog full heal — POST /api/catalog/resync on the local backend.
   const resyncCatalog = useRunLocalCatalogResync();
 
   // Active tab — ephemeral UI state only.
@@ -780,8 +780,8 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                 />
               </Row>
 
-              {/* Local scan status — read-only; credentials live in worker/.dev.vars.local */}
-              <Row label="Local scan" hint="on this device">
+              {/* Backend reachability — read-only probe of GET /api/health. */}
+              <Row label="Backend" hint="local, on this PC">
                 <span
                   className="cb-mono"
                   style={{
@@ -791,8 +791,8 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   aria-live="polite"
                 >
                   {lsConfigured
-                    ? `Configured ✓ · Telegram: ${lsHasTelegram ? 'on' : 'off'}`
-                    : 'Not configured'}
+                    ? `Running ✓ · Telegram: ${lsHasTelegram ? 'on' : 'off'}`
+                    : 'Not running'}
                 </span>
               </Row>
             </Panel>
@@ -800,7 +800,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
             <Panel title="Maintenance" className="set-panel">
               <Row
                 label="Resync catalog"
-                hint="Full re-pull of every set's cards on THIS device (local worker, not the cron). Un-freezes sets imported while sparse. Runs ~10+ min in the background."
+                hint="Full re-pull of every set's cards, bypassing the periodic new-sets-only refresh. Un-freezes sets imported while sparse. Runs ~10+ min in the background."
               >
                 <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                   <Btn
@@ -813,7 +813,7 @@ export function Settings({ onReplayBoot, onClearDeals }: SettingsProps = {}) {
                   </Btn>
                   {!lsConfigured && (
                     <span className="cb-mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                      Local scan not configured on this device.
+                      Backend not running.
                     </span>
                   )}
                   {resyncCatalog.isSuccess && (

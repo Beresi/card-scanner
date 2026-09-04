@@ -171,11 +171,11 @@ export function App() {
   const { data: openDeals = [] } = useDeals({ status: 'open' });
   const openCount = openDeals.length;
 
-  // ---- Local scan status — gates the Scan Now button ----
+  // ---- Backend reachability — gates the Scan Now button ----
   const { data: localScanStatus } = useLocalScanStatus();
   const localScanConfigured = localScanStatus?.configured ?? false;
 
-  // ---- Local scan mutation ----
+  // ---- Deep-sweep mutation ----
   const runLocalScan = useRunLocalScan();
 
   // Bulk deal clear (Settings → Maintenance): 'archived' vs 'all'.
@@ -191,7 +191,7 @@ export function App() {
   // Clear conditions (mirror the staleness guard in Telemetry):
   //   a) The run's finished_at became non-null (scan completed normally).
   //   b) The run has been open for >3 min with blueprints_scanned === 0
-  //      (sidecar died before doing any work — stalled).
+  //      (the sweep died before doing any work — stalled).
   //   c) The run id is not found in the list yet but activeLocalRunId was set
   //      more than 3 min ago — handles the case where run_local_scan returned
   //      a runId that never appeared in scan_runs (e.g. worker restart).
@@ -229,10 +229,10 @@ export function App() {
   }, []);
 
   // ---- Scan flow ----
-  // startScan fires the LOCAL sidecar scan (detached). The overlay animation
-  // plays while the sidecar launches; completion means "started", not "finished".
-  // If the sidecar call throws (not configured, sidecar crash), we close the
-  // overlay and push an error toast instead of leaving it stuck.
+  // startScan fires a deep sweep on the local backend (detached). The overlay
+  // animation plays while the request goes out; completion means "started", not
+  // "finished". If the call throws (backend down), we close the overlay and push
+  // an error toast instead of leaving it stuck.
   const startScan = useCallback(() => {
     if (scanning) return;
     if (!localScanConfigured) return; // gate: button should already be disabled
@@ -240,7 +240,7 @@ export function App() {
     runLocalScan.mutate(undefined, {
       onSuccess: (result) => {
         // Capture the run id so Telemetry tracks THIS specific run.
-        // runId may be null if the sidecar hadn't emitted the started line yet
+        // runId may be null if the server hadn't opened the scan_runs row yet
         // (rare race); in that case activeLocalRunId stays null and the block
         // won't show — acceptable graceful degradation for that edge case.
         if (result.runId !== null) {
@@ -249,7 +249,7 @@ export function App() {
         // Cache invalidation (scanRuns, health) also happens inside the mutation hook.
       },
       onError: (err) => {
-        // Sidecar failed to start — close overlay and surface the error.
+        // The sweep failed to start — close overlay and surface the error.
         setScanning(false);
         push({
           title: 'Scan failed to start',
@@ -263,7 +263,7 @@ export function App() {
   }, [scanning, localScanConfigured, runLocalScan, push]);
 
   // onScanComplete fires when the overlay animation finishes (~3.6s after startScan).
-  // At that point the sidecar is still running in the background — the overlay
+  // At that point the sweep is still running in the background — the overlay
   // completing does NOT mean the scan is done. Show a "started" toast instead
   // of a "complete" one, and point the user to Health for progress.
   const onScanComplete = useCallback(() => {
@@ -272,7 +272,7 @@ export function App() {
     setView('feed');
 
     push({
-      title: 'Local scan started',
+      title: 'Deep sweep started',
       sub: 'Running in the background. Progress appears in Health.',
       tone: 'accent',
       icon: 'radar',

@@ -53,7 +53,7 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onNavigate: (view: ViewKey) => void;
   onScanNow: () => void;
-  /** Whether local scan credentials are configured on this device. */
+  /** Whether the backend is reachable, i.e. a scan can be started. */
   scanConfigured?: boolean;
   onReplayBoot: () => void;
   onToggleEffects: () => void;
@@ -161,8 +161,8 @@ export function CommandPalette({
         group: 'Actions',
         label: 'Scan now',
         hint: scanConfigured
-          ? 'Trigger an immediate local scan run'
-          : "Local scan isn't set up on this device — configure it in Settings → Local Scan.",
+          ? 'Run a full deep sweep of every watched set now'
+          : "The Card // Broker backend isn't running — start it with install-service.ps1.",
         icon: 'radar',
         disabled: !scanConfigured,
         run: () => {
