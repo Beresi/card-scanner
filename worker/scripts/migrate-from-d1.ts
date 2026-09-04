@@ -49,21 +49,30 @@ const DEFAULT_CF_ACCOUNT_ID = '541d9063453516ba295a2c1cbf298129';
 const DEFAULT_CF_D1_DATABASE_ID = '32265ad6-4e1d-4ef8-8086-899962fcdb1f';
 
 /**
- * Tables to copy, in dependency order: `deals` and `purchases` reference
- * `watchlist`, so parents are inserted first and the foreign-key pragma the
- * local adapter enables stays satisfied throughout.
+ * Tables to copy, ordered MOST-VALUABLE-FIRST.
  *
- * `_local_migrations` is deliberately absent — it is local bookkeeping and is
- * rebuilt by bootstrapLocalDb().
+ * The schema has exactly one foreign key — deals.watchlist_id → watchlist(id) —
+ * so the only hard requirement is that `watchlist` precedes `deals`. Everything
+ * else is free to order by usefulness, and it should be:
+ *
+ * `blueprints` is the MTG card catalog and dwarfs every other table by orders of
+ * magnitude. Copying it early would mean that a run which exhausts the daily
+ * row-read cap partway leaves the owner with a catalog but no watchlist, no
+ * deals and no purchase history — the very things the app is for. Copying it
+ * last means an interrupted run still yields a usable app, and the catalog
+ * (which the scanner rebuilds on its own anyway) fills in on the next run.
+ *
+ * `_local_migrations` is deliberately absent — it is local bookkeeping, rebuilt
+ * by bootstrapLocalDb().
  */
 const TABLES = [
-  'config',
-  'expansions',
-  'blueprints',
-  'watchlist',
-  'deals',
-  'purchases',
-  'scan_runs',
+  'config',      // one row, and everything inherits from it
+  'watchlist',   // must precede deals (FK)
+  'deals',       // the feed
+  'purchases',   // the ledger — irreplaceable, nothing regenerates it
+  'scan_runs',   // history for the Health view
+  'expansions',  // set list; small
+  'blueprints',  // the card catalog — huge, and regenerable. Last on purpose.
 ] as const;
 
 /** Rows per REST request. Small enough to stay well inside D1's response cap
@@ -186,6 +195,26 @@ async function main(): Promise<void> {
   const apiToken = get('CF_API_TOKEN')!;
 
   const q = (sql: string, p: unknown[] = []) => remoteQuery(accountId, databaseId, apiToken, sql, p);
+
+  // --- Probe the remote FIRST ----------------------------------------------
+  // Nothing local is touched until Cloudflare has answered a trivial query.
+  //
+  // The overwhelmingly likely failure here is the daily row-read cap, and there
+  // is no point creating a database directory and running a bootstrap for a run
+  // that cannot proceed.
+  //
+  // (Note: on Windows this process also prints a spurious libuv assertion,
+  // "!(handle->flags & UV_HANDLE_CLOSING)", after any error exit. It comes from
+  // tsx tearing down undici's fetch handles, not from this script -- it is not
+  // better-sqlite3, and it appears with the SQLite handle closed, left open, or
+  // never created. Purely cosmetic: the real message prints first and the exit
+  // code is correct.)
+  //
+  // The probe must READ A ROW. `SELECT 1` touches no table, so it succeeds even
+  // when the row-read cap is exhausted and would wave a doomed run straight
+  // through. Reading one row from `config` (a single-row table) costs one row
+  // and is a true test of both reachability and the cap.
+  await q('SELECT id FROM config LIMIT 1');
 
   // --- Local database -------------------------------------------------------
   const explicitDb = get('CARD_BROKER_DB');

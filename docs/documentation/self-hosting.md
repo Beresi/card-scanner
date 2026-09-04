@@ -231,6 +231,40 @@ locally since then stays in the local file.
 - **Do not run both backends against their own databases and both with Telegram
   configured** — every deal gets pushed twice. Step 1 of the cutover exists to
   prevent exactly this.
-- **`npm run scan:local` still targets Cloudflare D1**, not the local database —
-  it is the old deep-sweep sidecar. After cutting over, a manual deep sweep is
-  just the local backend's own run-now, which has no time limit to escape.
+- **`npm run scan:local` and `npm run catalog:resync` still target Cloudflare
+  D1**, not the local database. They are the old CLIs, kept only as an escape
+  hatch while the cloud remains as a backup. Do not use them after the cutover —
+  their results would land in the database the app no longer reads.
+
+## The sidecar, and why it is gone
+
+"Scan Now" and Settings → Maintenance → "Resync catalog" used to spawn a bundled
+Tauri sidecar (a 92 MB Node SEA binary) that reached the database over the D1
+REST API. That sidecar existed for exactly one reason: to run work longer than a
+Worker's CPU and subrequest budget allowed.
+
+Self-hosted, that reason is gone — and keeping it would have been a correctness
+bug rather than dead weight. The sidecar writes to whatever database its own
+credentials name, which after the migration is the *old cloud D1*: both buttons
+would have appeared to work while their results landed where the app no longer
+reads, burning the quota being escaped.
+
+Both jobs are now detached API routes served in-process:
+
+| Button | Route | Returns |
+|---|---|---|
+| Scan Now | `POST /api/scan/deep-sweep` | `{ started, runId }` once the `scan_runs` row is open |
+| Resync catalog | `POST /api/catalog/resync` | `{ started, totalSets }` once the set list is resolved |
+
+`started: true` means *started*, not finished; the UI polls `scan_runs` and
+catalog progress exactly as it did before. `runScan` already exposed
+`onRunOpened` and `resyncCatalog` already exposed `onStart` for precisely this,
+and the response shapes are unchanged — the views consuming them did not change.
+
+Running in-process also means **one writer** on the SQLite file rather than two
+processes contending for it.
+
+Consequently the Tauri host lost `commands.rs`, the shell plugin, the
+`shell:allow-execute` sidecar grant, and `externalBin`. The webview now needs no
+process-spawning capability at all, and the desktop build no longer depends on
+building that SEA binary first.
