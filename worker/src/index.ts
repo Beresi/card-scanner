@@ -199,61 +199,81 @@ app.route('/api/catalog', catalogRouter);
 // ── Catch-all 404 ─────────────────────────────────────────────────────────────
 app.notFound((c) => c.json({ error: 'not found' }, 404));
 
+// ─── Shared exports for non-Workers hosts ─────────────────────────────────────
+// The Hono app and the heartbeat body are exported so the self-hosted Node
+// server (scripts/server-local.ts) mounts the IDENTICAL app and runs the
+// IDENTICAL tick logic. There is deliberately no second implementation of
+// either — the only difference between the cloud and local deployments is the
+// transport (workerd fetch vs node:http) and the timer (Cloudflare cron vs
+// setInterval). Anything added below is automatically live in both.
+export { app };
+
+/**
+ * One heartbeat tick — reap, maybe run daily maintenance, then run a scan if the
+ * configured interval has elapsed.
+ *
+ * Called once a minute by the Cloudflare cron (scheduled(), below) and by the
+ * self-hosted server's interval timer. The scan cadence is stored in
+ * config.scan_interval_minutes (default 60) so the owner can change it without a
+ * redeploy: shouldRunCron() checks how many minutes have elapsed since the last
+ * scan started and, if fewer than the configured interval, this tick is silently
+ * skipped with NO scan_runs row opened.
+ *
+ * POST /api/scan/run-now and the local deep-sweep sidecar always call runScan
+ * directly with trigger:'run-now' — they are never gated. The gate is ONLY here.
+ *
+ * Never throws: every stage has its own guard so one failure cannot stop the
+ * next tick.
+ */
+export async function heartbeatTick(env: Env): Promise<void> {
+  try {
+    // Reap on EVERY heartbeat (not just inside runScan) — the interval gate
+    // below skips runScan for up to scan_interval_minutes, so a cron run that
+    // was hard-killed mid-scan (no finally → finished_at stays NULL) would
+    // otherwise linger as "RUNNING" for a full interval. A 3-min staleness
+    // bar with the blueprints_scanned=0 guard closes dead rows fast and can
+    // never reap a progressing scan (which has blueprints_scanned > 0 within
+    // seconds). Non-fatal: failures here must not block the gate/scan.
+    try { await reapStaleScanRuns(env.DB, 3); } catch (re) {
+      console.error('[heartbeat] reap failed', re instanceof Error ? re.message : String(re));
+    }
+
+    const config = await getConfig(env.DB);
+
+    // Daily maintenance (migration 0013): auto-expire stale open deals (false
+    // positives whose blueprint hasn't re-scanned) and prune archived clutter
+    // older than deal_retention_days. Gated to once per ~24h via
+    // last_maintenance_at. Own try/catch — a maintenance failure must never
+    // block the scan gate below. Runs independently of the scan cadence.
+    try {
+      if (shouldRunMaintenance(config.last_maintenance_at, Date.now())) {
+        const expired = await expireStaleOpenDeals(env.DB, config.deal_staleness_hours);
+        const pruned = await pruneArchivedDeals(env.DB, config.deal_retention_days);
+        await setLastMaintenanceAt(env.DB);
+        console.log(`[heartbeat] maintenance: expired ${expired} stale, pruned ${pruned} archived`);
+      }
+    } catch (me) {
+      console.error('[heartbeat] maintenance failed', me instanceof Error ? me.message : String(me));
+    }
+
+    const latest = await getLatestScanRun(env.DB); // newest run (any status)
+    if (!shouldRunCron(latest?.started_at ?? null, config.scan_interval_minutes, Date.now())) {
+      return; // too soon — skip silently, no scan_runs row opened
+    }
+    await runScan(env, { trigger: 'cron' });
+  } catch (e) {
+    console.error('[heartbeat] gate/scan failed', e instanceof Error ? e.message : String(e));
+  }
+}
+
 // ─── Worker export ────────────────────────────────────────────────────────────
 export default {
   // HTTP API — all requests routed through the Hono app above.
   fetch: app.fetch,
 
-  // 1-minute heartbeat cron handler (wrangler.toml: crons = ["* * * * *"], UTC).
-  // The scan cadence is stored in config.scan_interval_minutes (default 60) so the
-  // owner can change it without a redeploy. On each tick, shouldRunCron() checks how
-  // many minutes have elapsed since the last scan started; if less than the configured
-  // interval, this tick is silently skipped and NO scan_runs row is opened.
-  //
-  // POST /api/scan/run-now and the local sidecar (trigger:'run-now') always call
-  // runScan directly — they are never gated. The gate is ONLY on the cron path.
-  //
+  // 1-minute heartbeat cron (wrangler.toml: crons = ["* * * * *"], UTC).
   // ctx.waitUntil keeps the isolate alive for the full async work.
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil((async () => {
-      try {
-        // Reap on EVERY heartbeat (not just inside runScan) — the interval gate
-        // below skips runScan for up to scan_interval_minutes, so a cron run that
-        // was hard-killed mid-scan (no finally → finished_at stays NULL) would
-        // otherwise linger as "RUNNING" for a full interval. A 3-min staleness
-        // bar with the blueprints_scanned=0 guard closes dead rows fast and can
-        // never reap a progressing scan (which has blueprints_scanned > 0 within
-        // seconds). Non-fatal: failures here must not block the gate/scan.
-        try { await reapStaleScanRuns(env.DB, 3); } catch (re) {
-          console.error('[scheduled] reap failed', re instanceof Error ? re.message : String(re));
-        }
-
-        const config = await getConfig(env.DB);
-
-        // Daily maintenance (migration 0013): auto-expire stale open deals (false
-        // positives whose blueprint hasn't re-scanned) and prune archived clutter
-        // older than deal_retention_days. Gated to once per ~24h via
-        // last_maintenance_at. Own try/catch — a maintenance failure must never
-        // block the scan gate below. Runs independently of the scan cadence.
-        try {
-          if (shouldRunMaintenance(config.last_maintenance_at, Date.now())) {
-            const expired = await expireStaleOpenDeals(env.DB, config.deal_staleness_hours);
-            const pruned = await pruneArchivedDeals(env.DB, config.deal_retention_days);
-            await setLastMaintenanceAt(env.DB);
-            console.log(`[scheduled] maintenance: expired ${expired} stale, pruned ${pruned} archived`);
-          }
-        } catch (me) {
-          console.error('[scheduled] maintenance failed', me instanceof Error ? me.message : String(me));
-        }
-
-        const latest = await getLatestScanRun(env.DB); // newest run (any status)
-        if (!shouldRunCron(latest?.started_at ?? null, config.scan_interval_minutes, Date.now())) {
-          return; // too soon — skip silently, no scan_runs row opened
-        }
-        await runScan(env, { trigger: 'cron' });
-      } catch (e) {
-        console.error('[scheduled] gate/scan failed', e instanceof Error ? e.message : String(e));
-      }
-    })());
+    ctx.waitUntil(heartbeatTick(env));
   },
 } satisfies ExportedHandler<Env>;

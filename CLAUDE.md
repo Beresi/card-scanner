@@ -16,9 +16,13 @@ delivery; backend logic is per-PRD).
   (binding `DB`), hourly cron `scheduled()` sharing the scan path with `POST /api/scan/run-now`.
   Always-on; scans regardless of whether the desktop app runs. No static-asset hosting.
 - **Desktop (`/desktop`):** **Tauri v2** — React + Vite + TS frontend (`src/`) in the webview +
-  a thin Rust host (`src-tauri/`). Calls the cloud `/api/*` over HTTPS via **TanStack Query**,
-  authenticating with a Cloudflare Access service token / shared bearer in on-device secure
-  storage.
+  a thin Rust host (`src-tauri/`). Calls the backend `/api/*` over HTTPS via **TanStack Query**,
+  authenticating with a shared bearer in on-device secure storage.
+- **Self-hosted backend (`/worker/scripts`):** the SAME Hono `app` and `heartbeatTick()` from
+  `src/index.ts`, served by `@hono/node-server` on `127.0.0.1` with a `setInterval` heartbeat
+  and a local SQLite file behind the D1 contract (`d1-sqlite.ts`). Installed as a Windows
+  logon task. Removes Cloudflare's row-read / subrequest / CPU caps. **Never fork the app or
+  the tick** — both deployments import them. See `docs/documentation/self-hosting.md`.
 
 @docs/project-summary.md
 @docs/documentation/architecture.md
@@ -33,6 +37,8 @@ Firebase, no Stripe/payments.
 | Task | Command |
 |---|---|
 | Backend dev | `npx wrangler dev` |
+| Self-hosted backend | `npm run serve:local` · install: `scripts\install-service.ps1` |
+| D1 → local SQLite | `npm run db:migrate-from-d1` · switch over: `npm run cutover` |
 | Frontend dev | `npm run dev` · desktop: `npm run tauri dev` |
 | Build | `npm run build` (frontend) · `npm run tauri build` (desktop bundle) |
 | Test | `npm test` / `npx vitest run` · `cargo test` (host) — `/test` |

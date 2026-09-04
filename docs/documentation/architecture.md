@@ -5,10 +5,13 @@
 
 ## Overview
 Two independently-built, independently-deployed units joined by an HTTP contract:
-1. **Cloud backend** — a single Cloudflare Worker that scans CardTrader hourly and exposes
-   a Hono JSON API over Cloudflare D1. Always-on; runs whether or not the desktop app is open.
+1. **Backend** — scans CardTrader hourly and exposes a Hono JSON API over SQLite. Ships in
+   two interchangeable forms: a Cloudflare Worker (`src/index.ts` default export) and a
+   self-hosted Node process (`scripts/server-local.ts`). Both import the SAME `app` and
+   `heartbeatTick()`; only the transport and the timer differ. See
+   [self-hosting](self-hosting.md).
 2. **Desktop client** — a Tauri v2 app (React+Vite+TS webview + Rust host) that is the
-   dashboard. It only reads/writes through the cloud `/api/*` routes.
+   dashboard. It only reads/writes through the backend `/api/*` routes, wherever it lives.
 
 ## Component map
 ```
@@ -100,3 +103,23 @@ Secrets: Wrangler secrets (backend) + OS secure store (desktop). Never in source
 - **Buy URL pattern** is unverified — confirm `https://www.cardtrader.com/cards/{blueprint_id}`
   during build; fall back to a search URL (PRD §6).
 - **Lightly-cached prices** — alerts are signals; the owner re-checks live price before buying.
+
+## Deployment targets
+The backend has two hosts. `src/index.ts` exports `app` (the Hono application) and
+`heartbeatTick(env)` (one scan-gate tick) so both import the identical code path — there is
+no second implementation of a route or of the schedule logic to keep in sync.
+
+| | Cloudflare Worker | Self-hosted (current) |
+|---|---|---|
+| Entry | `src/index.ts` default export | `scripts/server-local.ts` |
+| HTTP | `workerd` `fetch` | `@hono/node-server`, bound `127.0.0.1` |
+| Schedule | cron `* * * * *` → `scheduled()` | `setInterval(60s)` |
+| Storage | D1 binding `env.DB` | SQLite file via `scripts/d1-sqlite.ts` |
+| Process | Cloudflare edge, always-on | Windows logon task, on while the PC is on |
+| Limits | free-tier row-read / subrequest / CPU caps | CardTrader's ~1 req/s only |
+
+`src/db/repo.ts` is written against one structural D1 contract
+(`prepare · bind · run · all · first · batch · exec`) that four adapters satisfy: the real
+binding, `scripts/d1-http.ts` (REST), `scripts/d1-sqlite.ts` (local file), and
+`src/api/__test-helpers__/d1.ts` (in-memory, used by the suite). That is what makes the
+backend portable without touching business logic.

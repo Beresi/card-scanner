@@ -11,10 +11,15 @@
     "scan:local": "tsx scripts/scan-local.ts",
     "catalog:resync": "tsx scripts/resync-catalog.ts",
     "bundle:sidecar": "esbuild scripts/scan-local.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/scan-local.cjs --external:better-sqlite3 --log-level=info",
-    "build:sidecar": "node scripts/build-sidecar.mjs"
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "serve:local": "tsx scripts/server-local.ts",
+    "db:migrate-from-d1": "tsx scripts/migrate-from-d1.ts",
+    "cutover": "tsx scripts/cutover.ts"
   },
   "dependencies": {
-    "hono": "latest"
+    "@hono/node-server": "^2.1.1",
+    "hono": "latest",
+    "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
@@ -22,7 +27,6 @@
     "@types/node": "latest",
     "@typescript-eslint/eslint-plugin": "latest",
     "@typescript-eslint/parser": "latest",
-    "better-sqlite3": "^12.10.0",
     "esbuild": "^0.28.0",
     "eslint": "latest",
     "postject": "^1.0.0-alpha.6",
