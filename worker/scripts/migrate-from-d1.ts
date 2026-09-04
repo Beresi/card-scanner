@@ -331,10 +331,24 @@ async function main(): Promise<void> {
   log('');
 
   closeDb();
+
+  // Machine-readable verdict on stderr for the cutover to parse.
+  //
+  // The exit code CANNOT be trusted on Windows: after any HTTP request this
+  // process can abort during event-loop teardown (libuv UV_HANDLE_CLOSING
+  // assertion), which replaces our exit code with 0xC0000409. That happens after
+  // all work is committed, so the run is fine -- but a caller reading only the
+  // exit code would call a good copy a failure. This line is written before
+  // teardown and is therefore authoritative.
+  process.stderr.write(`[migrate-from-d1] RESULT ${incomplete.length === 0 ? 'ok' : 'incomplete'}\n`);
   process.exitCode = incomplete.length === 0 ? 0 : 1;
 }
 
 main().catch((e) => {
+  // The SQLite handle is deliberately not closed here: every page was committed
+  // as it was written and the database is in WAL mode, so anything copied is
+  // already durable and the next run resumes from it.
   process.stderr.write(`\n[migrate-from-d1] ${e instanceof Error ? e.message : String(e)}\n`);
-  process.exit(1);
+  process.stderr.write('[migrate-from-d1] RESULT failed\n');
+  process.exitCode = 1;
 });

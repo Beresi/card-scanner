@@ -60,16 +60,49 @@ export function readVarsFile(filePath: string): Map<string, string> {
 }
 
 /**
- * Resolve the worker/ directory for repo-relative lookups. Returns '' inside a
- * packaged binary where import.meta.url cannot be resolved to a real path.
+ * Resolve the worker/ directory for repo-relative lookups.
+ *
+ * Three call shapes have to work, which is why this is not a one-liner:
+ *   • ESM source under tsx    — import.meta.url is a real file path
+ *   • a bundled CJS entry     — import.meta.url is absent; __dirname is not
+ *   • a packaged SEA binary   — neither resolves; there is no repo on disk, and
+ *                               '' correctly means "use process.env only"
+ *
+ * Both the source layout (worker/scripts/x.ts) and the bundle layout
+ * (worker/.build/x.cjs) sit one level below worker/, so the same `..` applies.
+ *
+ * CARD_BROKER_WORKER_DIR overrides everything, for any layout not anticipated
+ * here.
  */
 export function resolveWorkerDir(): string {
+  const explicit = process.env.CARD_BROKER_WORKER_DIR;
+  if (explicit) { return path.resolve(explicit); }
+
+  // ESM: import.meta.url. Guarded because a CJS bundle has no import.meta and
+  // esbuild leaves the reference to throw at runtime rather than removing it.
   try {
-    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const url = (import.meta as { url?: string } | undefined)?.url;
+    if (url) { return path.resolve(path.dirname(fileURLToPath(url)), '..'); }
   } catch {
-    return '';
+    // Not an ES module — fall through.
   }
+
+  // CJS bundle: __dirname. Declared via globalThis so this compiles under the
+  // ESM-targeted tsconfig, where __dirname is not in scope.
+  try {
+    const dir = (globalThis as { __dirname?: string }).__dirname
+      ?? (typeof __dirname === 'string' ? __dirname : undefined);
+    if (dir) { return path.resolve(dir, '..'); }
+  } catch {
+    // Neither available — fall through.
+  }
+
+  return '';
 }
+
+// __dirname exists only in a CJS bundle; declare it so the guarded reference
+// above typechecks under the ESM tsconfig.
+declare const __dirname: string | undefined;
 
 /**
  * Build the per-key getter described in the file header. Sources are read once

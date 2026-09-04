@@ -40,7 +40,7 @@
  * separate, deliberate step once the local stack has proven itself.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeVarGetter, requireKeys, resolveWorkerDir } from './vars';
@@ -74,6 +74,61 @@ function backendControl(mode: 'Stop' | 'Restart', workerDir: string): void {
      path.join(workerDir, 'scripts', 'install-service.ps1'), `-${mode}`],
     { cwd: workerDir, stdio: 'inherit' },
   );
+}
+
+/**
+ * Run one of the migration scripts, showing its progress live but filtering a
+ * known-bogus line out of its stderr.
+ *
+ * On Windows, Node 24 prints
+ *   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c
+ * after this process exits non-zero following an HTTP request. It is emitted by
+ * the C runtime during event-loop teardown, AFTER our code has finished, so it
+ * cannot be prevented from inside the script.
+ *
+ * It is noise, not a failure: the real message is already printed, the exit code
+ * is correct, and every page copied before the error was committed. But the
+ * normal way to end a copy is hitting D1's daily row-read cap, and a line
+ * screaming "Assertion failed" underneath a calm "resume after midnight UTC"
+ * makes a routine pause look like a crash. So stderr is captured and that one
+ * line dropped; everything else is passed through untouched.
+ *
+ * Reproduced under tsx and plain node, with better-sqlite3 loaded, not loaded,
+ * and never imported — it is none of those. It could not be reproduced in any
+ * isolated script, so it is filtered rather than fixed.
+ *
+ * Crucially the assertion ABORTS the process, replacing the script's exit code
+ * with 0xC0000409 (3221226505). So the exit code cannot be trusted in either
+ * direction, and success is determined from the "RESULT ok" line the script
+ * writes before teardown instead. Without that, a completed copy could be
+ * reported as a failure purely because of this artifact.
+ *
+ * Throws if the script did not report success.
+ */
+function runMigration(workerDir: string, args: string[]): void {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(workerDir, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+     path.join(workerDir, 'scripts', 'migrate-from-d1.ts'), ...args],
+    // stdout inherited so per-table progress streams live; stderr piped so it
+    // can be filtered and inspected for the verdict.
+    { cwd: workerDir, stdio: ['ignore', 'inherit', 'pipe'], encoding: 'utf-8' },
+  );
+
+  const raw = result.stderr ?? '';
+
+  const shown = raw
+    .split('\n')
+    .filter((line) => !line.includes('UV_HANDLE_CLOSING') && !line.includes('] RESULT '))
+    .join('\n');
+  if (shown.trim()) { process.stderr.write(shown); }
+
+  if (!raw.includes('[migrate-from-d1] RESULT ok')) {
+    throw new Error(
+      `migrate-from-d1 ${args.join(' ')} did not complete successfully. ` +
+      'Nothing downstream of this step ran; re-running resumes the copy.',
+    );
+  }
 }
 
 /** Is anything answering on the local API? Used to confirm the stop took effect. */
@@ -141,13 +196,7 @@ async function main(): Promise<void> {
   if (dryRun) {
     log('      would run: tsx scripts/migrate-from-d1.ts --fresh');
   } else {
-    // Inherit stdio so the per-table progress is visible live.
-    execFileSync(
-      process.execPath,
-      [path.join(workerDir, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
-       path.join(workerDir, 'scripts', 'migrate-from-d1.ts'), '--fresh'],
-      { cwd: workerDir, stdio: 'inherit' },
-    );
+    runMigration(workerDir, ['--fresh']);
   }
 
   // -- 4. Verify -------------------------------------------------------------
@@ -155,14 +204,9 @@ async function main(): Promise<void> {
   if (dryRun) {
     log('      would run: tsx scripts/migrate-from-d1.ts --verify');
   } else {
-    execFileSync(
-      process.execPath,
-      [path.join(workerDir, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
-       path.join(workerDir, 'scripts', 'migrate-from-d1.ts'), '--verify'],
-      { cwd: workerDir, stdio: 'inherit' },
-    );
-    // migrate-from-d1 exits non-zero on a mismatch, so execFileSync already
-    // threw if any table was short. Reaching here means every table matched.
+    // migrate-from-d1 exits non-zero on a mismatch, so runMigration throws if
+    // any table was short. Reaching here means every table matched remote.
+    runMigration(workerDir, ['--verify']);
   }
 
   // -- 5. Point the desktop at localhost -------------------------------------
