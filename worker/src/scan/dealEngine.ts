@@ -119,8 +119,11 @@ export function evaluateBlueprint(
   //    DEFENSIVE: properties_hash.condition is an untrusted wire string.
   //    If it is not a key of the condition ladder, DROP the listing so
   //    one malformed listing does not crash the blueprint.
+  //    CT Zero only: a non-hub listing is neither a candidate NOR a comparator,
+  //    so it can't become a deal and can't drag the baseline either way.
   // ------------------------------------------------------------------
   const filtered = products.filter((p) => {
+    if (p.user?.can_sell_via_hub !== true) {return false;}
     if (p.properties_hash.mtg_language !== 'en') {return false;}
     if (p.on_vacation !== false) {return false;}
     if (!settings.allow_graded && p.graded !== false) {return false;}

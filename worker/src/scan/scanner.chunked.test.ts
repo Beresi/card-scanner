@@ -81,7 +81,7 @@ function makeDealResponse(blueprintId: number, productId: number): MarketplaceRe
     price: { cents, currency: 'USD' },
     properties_hash: { condition: 'Near Mint', mtg_language: 'en', mtg_foil: false },
     expansion: { id: 1, code: 'TST', name_en: 'Test Set' },
-    user: { username: 'seller', can_sell_via_hub: false, country_code: 'US' },
+    user: { username: 'seller', can_sell_via_hub: true, country_code: 'US' },
     graded: false,
     on_vacation: false,
   });
@@ -105,7 +105,7 @@ function makeNoDealResponse(blueprintId: number, productId: number): Marketplace
     price: { cents: 100, currency: 'USD' },
     properties_hash: { condition: 'Near Mint', mtg_language: 'en', mtg_foil: false },
     expansion: { id: 1, code: 'TST', name_en: 'Test Set' },
-    user: { username: 'seller', can_sell_via_hub: false, country_code: 'US' },
+    user: { username: 'seller', can_sell_via_hub: true, country_code: 'US' },
     graded: false,
     on_vacation: false,
   });

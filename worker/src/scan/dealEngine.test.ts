@@ -22,7 +22,7 @@ let _idCounter = 1;
  * Build a minimal Product fixture.
  *
  * Sensible defaults: EN, Near Mint, non-foil, not graded, not on vacation,
- * quantity 1. Pass overrides for the fields under test.
+ * quantity 1, CT Zero seller. Pass overrides for the fields under test.
  */
 function makeProduct(
   priceCents: number,
@@ -34,9 +34,12 @@ function makeProduct(
     graded?: boolean;
     on_vacation?: boolean;
     quantity?: number;
+    /** false = non-CT-Zero seller; null = listing with no `user` block. */
+    ct_zero?: boolean | null;
   } = {},
 ): Product {
   const id = overrides.id ?? _idCounter++;
+  const ctZero = overrides.ct_zero === undefined ? true : overrides.ct_zero;
   return {
     id,
     blueprint_id: 1001,
@@ -50,6 +53,9 @@ function makeProduct(
     },
     graded: overrides.graded ?? false,
     on_vacation: overrides.on_vacation ?? false,
+    ...(ctZero === null
+      ? {}
+      : { user: { username: 'seller', can_sell_via_hub: ctZero, country_code: 'IT' } }),
   };
 }
 
@@ -787,5 +793,58 @@ describe('parser leniency — condition-absent listings silently dropped by the 
     expect(result).not.toBeNull();
     expect(result!.product.id).not.toBe(noLang.id);
     expect(result!.product.id).toBe(nmCandidate.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CT Zero only — non-hub listings are ignored as candidates AND comparators.
+// ---------------------------------------------------------------------------
+
+describe('CT Zero filter', () => {
+  it('never picks a non-CT-Zero listing as the candidate', () => {
+    const offHub = makeProduct(1, { ct_zero: false });
+    const noUser = makeProduct(2, { ct_zero: null });
+    const candidate = makeProduct(16);
+    const cohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint([offHub, noUser, candidate, ...cohort], defaultSettings());
+
+    expect(result).not.toBeNull();
+    expect(result!.product.id).toBe(candidate.id);
+    expect(result!.cohortSize).toBe(10);
+  });
+
+  it('excludes non-CT-Zero listings from the baseline cohort', () => {
+    // Cheap off-hub copies would pull the median down to 17¢ and kill the deal.
+    const candidate = makeProduct(16);
+    const offHubCheap = Array.from({ length: 10 }, () => makeProduct(17, { ct_zero: false }));
+    const cohort = Array.from({ length: 10 }, () => makeProduct(32));
+
+    const result = evaluateBlueprint([candidate, ...offHubCheap, ...cohort], defaultSettings());
+
+    expect(result).not.toBeNull();
+    expect(result!.baselineCents).toBe(32);
+    expect(result!.secondCheapestCents).toBe(32);
+  });
+
+  it('treats a market with too few CT Zero copies as thin', () => {
+    const candidate = makeProduct(16);
+    const hubCohort = Array.from({ length: 3 }, () => makeProduct(32));
+    const offHub = Array.from({ length: 10 }, () => makeProduct(32, { ct_zero: false }));
+
+    expect(evaluateBlueprint([candidate, ...hubCohort, ...offHub], defaultSettings())).toBeNull();
+  });
+
+  it('applies in price mode too', () => {
+    const offHub = makeProduct(50, { ct_zero: false });
+    const hub = makeProduct(90);
+
+    const result = evaluateBlueprint(
+      [offHub, hub],
+      defaultSettings({ detection_mode: 'price', max_price_cents: 100 }),
+    );
+
+    expect(result!.product.id).toBe(hub.id);
+    expect(result!.cohortSize).toBe(1);
   });
 });
