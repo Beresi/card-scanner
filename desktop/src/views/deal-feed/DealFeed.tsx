@@ -115,6 +115,13 @@ export function DealFeed() {
 
   const dealCount = deals?.length ?? 0;
 
+  // Last failed card action (Dismiss / Bought / Cart). Without this a failed
+  // mutation looks like a dead button. Clears when that action next succeeds.
+  const actionError: { label: string; err: Error } | null =
+    mutation.error ? { label: 'Deal update failed', err: mutation.error }
+    : cartAdd.error ? { label: 'Add to cart failed', err: cartAdd.error }
+    : null;
+
   return (
     <div style={{ padding: 'var(--pad)', maxWidth: 1480, margin: '0 auto' }}>
 
@@ -206,6 +213,12 @@ export function DealFeed() {
           <span style={{ color: 'var(--hot)' }}>
             <Icon name="alert" size={13} />
             {' '}{errorMessage(error)}
+          </span>
+        )}
+        {actionError && (
+          <span role="alert" style={{ color: 'var(--hot)', marginLeft: 'auto' }}>
+            <Icon name="alert" size={13} />
+            {' '}{actionError.label} — {errorMessage(actionError.err)}
           </span>
         )}
       </div>

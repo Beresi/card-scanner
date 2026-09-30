@@ -289,4 +289,22 @@ describe('DealFeed', () => {
     expect(matches[0]).toBeInTheDocument();
   });
 
+  // -------------------------------------------------------------------------
+  // Test 7: a failed card action is surfaced, not swallowed
+  // -------------------------------------------------------------------------
+  it('failed dismiss: shows the API error instead of silently doing nothing', async () => {
+    const user = userEvent.setup();
+    const { ApiError } = await import('../../api/client');
+    mockGetDeals.mockResolvedValue([DEAL_A]);
+    mockPatchDeal.mockRejectedValueOnce(new ApiError(500, 'internal_error'));
+
+    renderFeed();
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss deal' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Deal update failed — API error 500: internal_error',
+    );
+  });
+
 });
